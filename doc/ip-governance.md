@@ -1,18 +1,14 @@
 # Resin IP 治理扩展
 
-该目录是阶段二/三的配套数据面实现，基于 Resin 1.2.0 的固定提交 `42dff8c0e4e96b465b5bd94f75a484c34e3cd658`。**普通 Resin 镜像不具备这些准入能力。** 增强设置会实际检查扩展与治理回调的连通性，未就绪时不能保存为软限制或严格模式。
+本 fork 已合入 IP 治理扩展，基于上游提交 `9b8ef8e5cf83071fbac4de29bd7187268b9cff7b`。
 
-## 构建
+## 构建与发布
 
-在 grok2api 仓库根目录运行：
+推送 master 会触发 Governance image 工作流，运行路由、代理与 API 测试后发布 `ghcr.io/kaibush/resin:governance` 和 `governance-<完整提交 SHA>`。生产部署使用提交标签或 digest。
 
-```sh
-docker build -f tools/resin-governance/Dockerfile -t resin:ip-governance .
-```
+源码已包含扩展，无需再次应用 grok2api 中的补丁。也可在仓库根目录运行 `docker build -t resin:governance .`。
 
-构建会拉取上述固定版本、校验接入点、应用扩展、构建原 Resin WebUI、运行路由/代理/API 测试，再编译 Resin。使用该 Dockerfile 专属的忽略清单，避免根目录默认白名单遗漏扩展代码。不修改上游远程仓库。
-
-也可手动触发仓库的 `Resin IP governance image` GitHub Actions 工作流，在 GitHub 构建推送配套镜像，避免本地构建镜像占用空间。工作流不会替换正在运行的容器。
+未设置 `RESIN_GOVERNANCE_URL` 时保持原生路由行为。必须先部署支持治理回调的 grok2api，再添加以下环境配置；旧应用没有该端点，提前开启会导致路由拒绝。
 
 ## 运行配置
 
