@@ -22,6 +22,8 @@ ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
+RUN go test ./internal/routing ./internal/proxy ./internal/api
+
 RUN CGO_ENABLED=0 go build -trimpath -tags "with_quic with_wireguard with_grpc with_utls" \
   -ldflags="-s -w \
   -X github.com/Resinat/Resin/internal/buildinfo.Version=${VERSION} \

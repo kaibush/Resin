@@ -28,6 +28,7 @@ type PoolAccessor interface {
 
 // Router handles route selection and lease management.
 type Router struct {
+	governance      *governanceClient
 	pool            PoolAccessor
 	states          *xsync.Map[string, *PlatformRoutingState]
 	authorities     func() []string
@@ -49,6 +50,7 @@ type RouterConfig struct {
 
 func NewRouter(cfg RouterConfig) *Router {
 	return &Router{
+		governance:      newGovernanceClient(),
 		pool:            cfg.Pool,
 		states:          xsync.NewMap[string, *PlatformRoutingState](),
 		authorities:     cfg.Authorities,
@@ -59,6 +61,7 @@ func NewRouter(cfg RouterConfig) *Router {
 }
 
 type RouteResult struct {
+	Governed     bool
 	PlatformID   string
 	PlatformName string
 	NodeHash     node.Hash
@@ -87,6 +90,15 @@ func (r *Router) RouteRequest(platName, account, target string) (RouteResult, er
 	state := r.ensurePlatformState(plat.ID)
 	var result RouteResult
 	if account == "" {
+		if r.governance != nil {
+			decision, e := r.governanceDecision(plat, account, Lease{}, false)
+			if e != nil {
+				return RouteResult{}, e
+			}
+			if decision.Mode != "audit" {
+				return RouteResult{}, ErrNoAvailableNodes
+			}
+		}
 		result, err = r.routeRandom(plat, state, targetDomain)
 	} else {
 		result, err = r.routeSticky(plat, state, account, targetDomain, time.Now())
@@ -156,7 +168,13 @@ func (r *Router) routeSticky(
 	var routeErr error
 
 	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
-		newLease, op, routeResult, err := r.decideStickyLease(
+		decide := r.decideStickyLease
+		if r.governance != nil {
+			decide = func(p *platform.Platform, s *PlatformRoutingState, a, t string, n time.Time, _ int64, c Lease, l bool) (Lease, xsync.ComputeOp, RouteResult, error) {
+				return r.decideGovernedLease(p, s, a, t, n, c, l)
+			}
+		}
+		newLease, op, routeResult, err := decide(
 			plat,
 			state,
 			account,
@@ -490,6 +508,20 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 // UpsertLease writes or replaces a lease for (platform_id, account).
 // It updates per-IP lease counters and emits LeaseCreate/LeaseReplace events.
 func (r *Router) UpsertLease(ml model.Lease) error {
+	if r.governance != nil {
+		p, ok := r.pool.GetPlatform(ml.PlatformID)
+		if !ok {
+			return ErrPlatformNotFound
+		}
+		policy, err := r.governanceDecision(p, ml.Account, Lease{}, false, true)
+		if err != nil {
+			return err
+		}
+		if policy.Mode != "audit" {
+			_, err = r.RouteRequest(p.Name, ml.Account, "")
+			return err
+		}
+	}
 	platformID := strings.TrimSpace(ml.PlatformID)
 	if platformID == "" {
 		return errors.New("platform_id is required")

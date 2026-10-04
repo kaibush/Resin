@@ -24,7 +24,7 @@ func resolveRoutedOutbound(
 	}
 
 	entry, ok := pool.GetEntry(result.NodeHash)
-	if !ok {
+	if !ok || (result.Governed && entry.GetEgressIP().Unmap() != result.EgressIP.Unmap()) {
 		return routedOutbound{}, ErrNoAvailableNodes
 	}
 	obPtr := entry.Outbound.Load()

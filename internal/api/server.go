@@ -72,6 +72,7 @@ func NewServerWithAddress(
 	authed.Handle("GET /api/v1/system/config/env", HandleSystemEnvConfig(envCfg))
 
 	if cp != nil {
+		registerGovernance(authed, cp)
 		// System config mutations.
 		authed.Handle("PATCH /api/v1/system/config", HandlePatchSystemConfig(cp))
 

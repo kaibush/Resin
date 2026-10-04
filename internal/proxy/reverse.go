@@ -86,7 +86,12 @@ func (p *ReverseProxy) outboundHTTPTransport(routed routedOutbound) *http.Transp
 			p.transportPool = NewOutboundTransportPool(p.transportConfig)
 		}
 	})
-	return p.transportPool.Get(routed.Route.NodeHash, routed.Outbound, p.metricsSink)
+	transport := p.transportPool.Get(routed.Route.NodeHash, routed.Outbound, p.metricsSink)
+	if routed.Route.Governed {
+		transport = transport.Clone()
+		transport.DisableKeepAlives = true
+	}
+	return transport
 }
 
 func (p *ReverseProxy) directHTTPTransport() *http.Transport {
@@ -300,7 +305,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var transport *http.Transport
 	var nodeHashRaw = route.NodeHash
 	domain := netutil.ExtractDomain(parsed.Host)
-	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) {
+	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) && !p.router.GovernanceEnforced() {
 		transport = p.directHTTPTransport()
 	} else {
 		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)

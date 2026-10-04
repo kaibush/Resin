@@ -72,7 +72,7 @@ func prepareConnectTunnel(
 	account string,
 	target string,
 ) tunnelPrepareResult {
-	if deps.bypass != nil && deps.bypass.ShouldBypass(target) {
+	if deps.bypass != nil && deps.bypass.ShouldBypass(target) && !deps.router.GovernanceEnforced() {
 		return prepareDirectConnectTunnel(ctx, deps, target)
 	}
 

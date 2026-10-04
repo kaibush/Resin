@@ -75,7 +75,12 @@ func (p *ForwardProxy) outboundHTTPTransport(routed routedOutbound) *http.Transp
 			p.transportPool = NewOutboundTransportPool(p.transportConfig)
 		}
 	})
-	return p.transportPool.Get(routed.Route.NodeHash, routed.Outbound, p.metricsSink)
+	transport := p.transportPool.Get(routed.Route.NodeHash, routed.Outbound, p.metricsSink)
+	if routed.Route.Governed {
+		transport = transport.Clone()
+		transport.DisableKeepAlives = true
+	}
+	return transport
 }
 
 func (p *ForwardProxy) directHTTPTransport() *http.Transport {
@@ -229,7 +234,7 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var route routing.RouteResult
 	var hasRoute bool
 	var transport *http.Transport
-	if p.bypass != nil && p.bypass.ShouldBypass(r.Host) {
+	if p.bypass != nil && p.bypass.ShouldBypass(r.Host) && !p.router.GovernanceEnforced() {
 		transport = p.directHTTPTransport()
 	} else {
 		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, platName, account, r.Host)
