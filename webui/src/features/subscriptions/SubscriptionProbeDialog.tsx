@@ -149,7 +149,13 @@ function ProbeUsagePanel({ subscription }: { subscription: Subscription }) {
       <div className="data-table-wrap"><table className="data-table"><thead><tr><th>{t("原因")}</th><th>{t("次数")}</th><th>{t("失败")}</th><th>{t("上行 MB")}</th><th>{t("下行 MB")}</th></tr></thead><tbody>
         {([ ["required", "使用前验证"], ["periodic", "周期检测"], ["retry", "故障复测"], ["manual", "手动检测"] ] as const).map(([reason, label]) => {
           const group = rows.filter(row => row.reason === reason);
-          return <tr key={reason}><td>{t(label)}</td><td>{group.reduce((s,r)=>s+r.attempts,0)}</td><td>{group.reduce((s,r)=>s+r.failures,0)}</td><td>{(group.reduce((s,r)=>s+r.egress_bytes,0)/1e6).toFixed(2)}</td><td>{(group.reduce((s,r)=>s+r.ingress_bytes,0)/1e6).toFixed(2)}</td></tr>;
+          return <tr key={reason}>
+            <td data-label={t("原因")}>{t(label)}</td>
+            <td data-label={t("次数")}>{group.reduce((s,r)=>s+r.attempts,0)}</td>
+            <td data-label={t("失败")}>{group.reduce((s,r)=>s+r.failures,0)}</td>
+            <td data-label={t("上行 MB")}>{(group.reduce((s,r)=>s+r.egress_bytes,0)/1e6).toFixed(2)}</td>
+            <td data-label={t("下行 MB")}>{(group.reduce((s,r)=>s+r.ingress_bytes,0)/1e6).toFixed(2)}</td>
+          </tr>;
         })}
       </tbody></table></div>
     </>}

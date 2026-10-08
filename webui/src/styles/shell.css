@@ -216,3 +216,487 @@
     display: none !important;
   }
 }
+
+@media (max-width: 960px) {
+  .data-table-wrap,
+  .data-table-wrap-logs,
+  .platform-lease-table-wrap {
+    overflow: visible;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .data-table,
+  .data-table-subs,
+  .data-table-logs,
+  .data-table-rules,
+  .data-table-leases {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tbody {
+    display: block;
+  }
+
+  .data-table tbody tr,
+  .data-table tbody tr:hover,
+  .data-table-row-selected,
+  .nodes-row-selected {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: #fff;
+    margin-bottom: 10px;
+    padding: 2px 12px 8px;
+  }
+
+  .data-table tbody td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    width: auto;
+    padding: 9px 0;
+    border-bottom: 1px solid #eef0f3;
+    white-space: normal;
+    text-align: right;
+    font-size: 14px;
+  }
+
+  .data-table tbody td:last-child {
+    border-bottom: 0;
+  }
+
+  .data-table tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 38%;
+    max-width: 42%;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: left;
+    padding-top: 2px;
+  }
+
+  .data-table tbody td[data-label=""]::before {
+    content: none;
+  }
+
+  .data-table tbody td :where(div, span, p, small, strong) {
+    max-width: none !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+  }
+
+  .data-table tbody td:first-child {
+    display: block;
+    padding-top: 12px;
+  }
+
+  .data-table tbody td:first-child::before {
+    display: block;
+    max-width: none;
+    margin-bottom: 4px;
+    padding-top: 0;
+  }
+
+  .subscriptions-name-cell,
+  .nodes-tag-cell {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .subscriptions-name-text {
+    font-size: 15px;
+    text-align: left;
+  }
+
+  .data-cell-actions {
+    display: block;
+  }
+
+  .data-cell-actions::before {
+    display: block;
+    max-width: none;
+    margin-bottom: 8px;
+  }
+
+  .subscriptions-row-actions,
+  .lease-row-actions,
+  .nodes-row-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+    gap: 8px;
+    width: 100%;
+    white-space: normal;
+  }
+
+  .subscriptions-row-actions .btn,
+  .subscriptions-row-actions a.btn,
+  .lease-row-actions .btn,
+  .nodes-row-actions .btn {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .list-card-header,
+  .surface-header,
+  .modal-header,
+  .drawer-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .list-card-header > div,
+  .surface-header > div {
+    width: 100% !important;
+    max-width: none !important;
+    flex-wrap: wrap !important;
+  }
+
+  .search-box,
+  .subscription-inline-filter,
+  .subscription-inline-filter .select,
+  .platform-lease-search {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0;
+  }
+
+  .logs-inline-filters > div,
+  .nodes-inline-filters > div,
+  .probe-logs-field {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  .nodes-inline-filters > div:last-child,
+  .endpoint-toolbar-actions,
+  .drawer-header-actions,
+  .platform-config-actions {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    margin-left: 0 !important;
+    gap: 8px;
+  }
+
+  .list-card-header .btn,
+  .surface-header .btn,
+  .endpoint-toolbar-actions .btn,
+  .drawer-header-actions .btn,
+  .platform-config-actions .btn,
+  .modal-header .btn,
+  .nodes-inline-filters .btn,
+  .logs-inline-filters .btn,
+  .probe-logs-filter-actions .btn,
+  .nodes-pagination-controls .btn,
+  .nodes-pagination-controls .btn-sm {
+    min-height: 44px;
+    height: auto !important;
+  }
+
+  .endpoint-toolbar-actions .btn,
+  .drawer-header-actions .btn,
+  .platform-config-actions .btn,
+  .nodes-inline-filters > div:last-child .btn,
+  .probe-logs-filter-actions .btn,
+  .logs-inline-filters .btn {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+  }
+
+  .nodes-inline-filters input,
+  .nodes-inline-filters select,
+  .logs-inline-filters input,
+  .logs-inline-filters select,
+  .probe-logs-field input,
+  .probe-logs-field select,
+  .search-box input,
+  .subscription-inline-filter select {
+    height: 44px !important;
+    min-height: 44px !important;
+    font-size: 16px !important;
+  }
+
+  .platform-cards-container,
+  .subscriptions-table-card,
+  .nodes-table-card,
+  .filter-card {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 960px) {
+  .main,
+  .content,
+  .page,
+  .platform-page,
+  .geoip-page {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .data-table,
+  .data-table-subs,
+  .data-table-logs,
+  .data-table-rules,
+  .data-table-leases,
+  .nodes-table,
+  .subscriptions-table {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .data-table tbody td,
+  .data-table-subs tbody td:nth-child(n) {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    white-space: normal !important;
+    box-sizing: border-box;
+  }
+
+  .data-table tbody td::before {
+    flex: 1 1 42%;
+    width: auto;
+    min-width: 0;
+    max-width: 48%;
+    overflow-wrap: anywhere;
+  }
+
+  .subscription-enabled-cell {
+    margin-left: auto;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: flex-end;
+  }
+
+  .data-table-wrap,
+  .nodes-table-wrap {
+    overflow-x: hidden;
+  }
+
+  .btn:not(.password-visibility-toggle),
+  a.btn,
+  .locale-switch-compact,
+  .mobile-menu-btn,
+  .sidebar-close,
+  .config-restore-btn,
+  .platform-detail-tab,
+  .subscription-probe-mark {
+    min-height: 44px !important;
+    height: auto !important;
+  }
+
+  .subscriptions-row-actions .btn,
+  .subscriptions-row-actions a.btn,
+  .lease-row-actions .btn,
+  .nodes-row-actions .btn,
+  .sidebar-icon-btn,
+  .mobile-menu-btn,
+  .sidebar-close,
+  .config-restore-btn {
+    min-width: 44px;
+  }
+
+  .locale-switch-compact {
+    min-width: 52px;
+    padding: 0 12px !important;
+  }
+
+  .app-sidebar .nav-group-label {
+    min-height: 44px;
+    height: auto;
+  }
+
+  .app-sidebar .sidebar-icon-btn {
+    width: 44px;
+    height: 44px !important;
+  }
+
+  .config-restore-btn {
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    margin-left: 4px;
+    flex: 0 0 44px;
+  }
+
+  .subscription-probe-mark {
+    height: auto;
+    padding: 0 12px;
+  }
+
+  .switch {
+    width: 44px;
+    height: 26px;
+  }
+
+  .switch-slider:before {
+    width: 20px;
+    height: 20px;
+    left: 3px;
+    bottom: 3px;
+  }
+
+  .switch-input:checked + .switch-slider:before {
+    transform: translateX(18px);
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  .input,
+  .select {
+    min-height: 44px !important;
+    height: 44px !important;
+    font-size: 16px !important;
+  }
+
+  textarea,
+  .textarea {
+    font-size: 16px !important;
+  }
+
+  .syscfg-checkbox-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .syscfg-section .field-group > div,
+  .detail-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .endpoint-tile-bottom {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .endpoint-tile-bottom .subscriptions-row-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .endpoint-capability {
+    white-space: normal;
+  }
+
+  .nodes-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .nodes-pagination-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .nodes-page-size,
+  .nodes-page-jump {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .nodes-page-size .select,
+  .nodes-page-jump .select {
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0;
+  }
+
+  .nodes-pagination-controls > .btn {
+    width: 100%;
+  }
+
+  .platform-detail-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    overflow: visible;
+  }
+
+  .platform-detail-tab {
+    min-width: 0;
+    padding: 10px 8px;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .recharts-responsive-container,
+  .recharts-wrapper {
+    max-width: 100% !important;
+  }
+
+  .modal-overlay,
+  .drawer-overlay {
+    z-index: 80;
+  }
+
+  .modal-header,
+  .drawer-header {
+    flex-direction: row;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+  }
+
+  .modal-header h3,
+  .drawer-header h3,
+  .drawer-header p {
+    overflow-wrap: anywhere;
+  }
+
+  .modal-header h3,
+  .drawer-header > div:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .modal-header > .btn,
+  .drawer-header-actions {
+    width: auto !important;
+    margin-left: 8px !important;
+    flex: 0 0 auto;
+  }
+
+  .modal-header > .btn,
+  .drawer-header-actions .btn {
+    flex: 0 0 44px !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px;
+    padding: 0 !important;
+  }
+
+  .modal-card,
+  .drawer-panel {
+    overflow: auto;
+  }
+
+  .form-grid,
+  .filter-grid,
+  .logs-filter-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

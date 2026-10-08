@@ -360,7 +360,9 @@ export function SystemConfigPage() {
     return (
       <button
         type="button"
+        className="config-restore-btn"
         title={displayVal ? t("恢复为默认值: {{value}}", { value: displayVal }) : t("恢复为默认值")}
+        aria-label={displayVal ? t("恢复为默认值: {{value}}", { value: displayVal }) : t("恢复为默认值")}
         onClick={() => handleRestoreDefault(fieldKey)}
         style={{
           background: "transparent",

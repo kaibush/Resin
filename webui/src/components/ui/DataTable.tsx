@@ -1,5 +1,19 @@
 import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 
+declare module "@tanstack/react-table" {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    interface ColumnMeta<TData, TValue> {
+        label?: string;
+    }
+}
+
+function headerText(header: unknown, meta: { label?: string } | undefined) {
+    if (typeof header === "string") {
+        return header;
+    }
+    return meta?.label ?? "";
+}
+
 type DataTableProps<T> = {
     data: T[];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,9 +66,14 @@ export function DataTable<T>({
                                 className={isSelected ? "data-table-row-selected" : onRowClick ? "clickable-row" : undefined}
                                 onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                             >
-                                {row.getVisibleCells().map((cell) => (
-                                    <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                                ))}
+                                {row.getVisibleCells().map((cell) => {
+                                    const label = headerText(cell.column.columnDef.header, cell.column.columnDef.meta);
+                                    return (
+                                        <td key={cell.id} data-label={label} className={cell.column.id === "actions" ? "data-cell-actions" : undefined}>
+                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                        </td>
+                                    );
+                                })}
                             </tr>
                         );
                     })}

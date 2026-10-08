@@ -525,6 +525,7 @@ export function NodesPage() {
   const nodeColumns = [
     col.accessor((row) => firstTag(row), {
       id: "tag",
+      meta: { label: t("节点名") },
       header: () => (
         <button type="button" className="table-sort-btn" onClick={() => changeSort("tag")}>
           {t("节点名")}
@@ -538,6 +539,7 @@ export function NodesPage() {
       ),
     }),
     col.accessor("region", {
+      meta: { label: t("区域") },
       header: () => (
         <button type="button" className="table-sort-btn" onClick={() => changeSort("region")}>
           {t("区域")}
@@ -585,6 +587,7 @@ export function NodesPage() {
       cell: (info) => formatRelativeTime(info.getValue()),
     }),
     col.accessor("failure_count", {
+      meta: { label: t("连续失败") },
       header: () => (
         <button type="button" className="table-sort-btn" onClick={() => changeSort("failure_count")}>
           {t("连续失败")}
@@ -610,6 +613,7 @@ export function NodesPage() {
       },
     }),
     col.accessor("created_at", {
+      meta: { label: t("创建时间") },
       header: () => (
         <button type="button" className="table-sort-btn" onClick={() => changeSort("created_at")}>
           {t("创建时间")}
