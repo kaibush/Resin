@@ -247,7 +247,34 @@ func newTopologyRuntime(
 	}
 	outboundMgr := outbound.NewOutboundManager(pool, singboxBuilder)
 
+	metered, err := probe.NewMeteredController(pool, subManager, engine.StateRepo)
+	if err != nil {
+		return nil, fmt.Errorf("load probe ledger: %w", err)
+	}
 	probeMgr := probe.NewProbeManager(probe.ProbeConfig{
+		Metered: metered,
+		StatsFetcher: func(hash node.Hash, url string) ([]byte, time.Duration, int64, int64, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
+			defer cancel()
+			entry, ok := pool.GetEntry(hash)
+			if !ok {
+				return nil, 0, 0, 0, outbound.ErrOutboundNotReady
+			}
+			ob := entry.Outbound.Load()
+			if ob == nil {
+				return nil, 0, 0, 0, outbound.ErrOutboundNotReady
+			}
+			var ingress, egress int64
+			body, latency, err := netutil.HTTPGetViaOutbound(ctx, *ob, url, netutil.OutboundHTTPOptions{
+				RequireStatusOK:  true,
+				MaxBodyBytes:     16 << 10,
+				MaxTransferBytes: probe.ProbeTransferLimit,
+				MaxRedirects:     1,
+				OnBytes:          func(in, out int64) { ingress = in; egress = out },
+				OnConnLifecycle:  onProbeConnLifecycle,
+			})
+			return body, latency, ingress, egress, err
+		},
 		Pool:        pool,
 		Concurrency: envCfg.ProbeConcurrency,
 		Fetcher: func(hash node.Hash, url string) ([]byte, time.Duration, error) {
@@ -262,7 +289,10 @@ func newTopologyRuntime(
 				return nil, 0, outbound.ErrOutboundNotReady
 			}
 			return netutil.HTTPGetViaOutbound(ctx, *outboundPtr, url, netutil.OutboundHTTPOptions{
-				RequireStatusOK: false,
+				RequireStatusOK:  false,
+				MaxBodyBytes:     16 << 10,
+				MaxTransferBytes: probe.ProbeTransferLimit,
+				MaxRedirects:     3,
 				OnConnLifecycle: func(op netutil.ConnLifecycleOp) {
 					if onProbeConnLifecycle != nil {
 						onProbeConnLifecycle(op)
@@ -287,6 +317,7 @@ func newTopologyRuntime(
 		},
 	})
 
+	pool.SetOnPassiveResult(probeMgr.ObservePassiveResult)
 	pool.SetOnNodeAdded(func(hash node.Hash) {
 		engine.MarkNodeStatic(hash.Hex())
 		outboundMgr.EnsureNodeOutbound(hash)
@@ -365,6 +396,7 @@ func bootstrapTopology(
 		sub.SetContent(ms.Content)
 		sub.SetIncrementalAliveNodes(ms.IncrementalAliveNodes)
 		sub.SetEphemeralNodeEvictDelayNs(ms.EphemeralNodeEvictDelayNs)
+		sub.SetProbePolicy(ms.ProbePolicy)
 		sub.CreatedAtNs = ms.CreatedAtNs
 		sub.UpdatedAtNs = ms.UpdatedAtNs
 		subManager.Register(sub)

@@ -23,8 +23,10 @@ type Fetcher func(hash node.Hash, url string) (body []byte, latency time.Duratio
 // ProbeConfig configures the ProbeManager.
 // Field names align 1:1 with RuntimeConfig to prevent mis-wiring.
 type ProbeConfig struct {
-	Pool        *topology.GlobalNodePool
-	Concurrency int // number of async probe workers
+	Metered      *MeteredController
+	StatsFetcher StatsFetcher
+	Pool         *topology.GlobalNodePool
+	Concurrency  int // number of async probe workers
 	// QueueCapacity is the per-priority async queue capacity.
 	// If <= 0, defaults to max(1024, Concurrency*4).
 	QueueCapacity int
@@ -53,14 +55,16 @@ type ProbeConfig struct {
 // ProbeManager schedules and executes active probes against nodes in the pool.
 // It holds a direct reference to *topology.GlobalNodePool (no interface).
 type ProbeManager struct {
-	pool        *topology.GlobalNodePool
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
-	fetcher     Fetcher
-	workerCount int
-	taskQueue   *probeTaskQueue
-	taskStates  *xsync.Map[probeTaskKey, *probeTaskState]
+	metered      *MeteredController
+	statsFetcher StatsFetcher
+	pool         *topology.GlobalNodePool
+	stopCh       chan struct{}
+	stopOnce     sync.Once
+	wg           sync.WaitGroup
+	fetcher      Fetcher
+	workerCount  int
+	taskQueue    *probeTaskQueue
+	taskStates   *xsync.Map[probeTaskKey, *probeTaskState]
 
 	maxEgressTestInterval           func() time.Duration
 	maxLatencyTestInterval          func() time.Duration
@@ -259,6 +263,8 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 
 	return &ProbeManager{
 		pool:                            cfg.Pool,
+		metered:                         cfg.Metered,
+		statsFetcher:                    cfg.StatsFetcher,
 		stopCh:                          make(chan struct{}),
 		fetcher:                         cfg.Fetcher,
 		workerCount:                     conc,
@@ -313,18 +319,25 @@ func (m *ProbeManager) Stop() {
 		close(m.stopCh)
 		m.taskQueue.StopDropPending()
 	})
+	m.metered.stop()
 	m.wg.Wait()
 }
 
 // TriggerImmediateEgressProbe enqueues an async egress probe for a node.
 // Caller returns immediately.
 func (m *ProbeManager) TriggerImmediateEgressProbe(hash node.Hash) {
+	if _, _, ok := m.metered.Policy(hash); ok {
+		return
+	}
 	m.enqueueProbe(hash, probeTaskKindEgress, probePriorityNormal)
 }
 
 // TriggerImmediateLatencyProbe enqueues an async latency probe for a node.
 // Caller returns immediately.
 func (m *ProbeManager) TriggerImmediateLatencyProbe(hash node.Hash) {
+	if _, _, ok := m.metered.Policy(hash); ok {
+		return
+	}
 	m.enqueueProbe(hash, probeTaskKindLatency, probePriorityNormal)
 }
 
@@ -338,6 +351,23 @@ type EgressProbeResult struct {
 // ProbeEgressSync performs a blocking egress probe and returns the results.
 // Used by API action endpoints that must return probe data synchronously.
 func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, error) {
+	if m.metered.disabledMetered(hash) {
+		return nil, fmt.Errorf("metered node disabled")
+	}
+	if _, _, ok := m.metered.Policy(hash); ok {
+		ip, _, err := m.metered.run(m, hash, "manual")
+		if err != nil {
+			return nil, err
+		}
+		entry, _ := m.pool.GetEntry(hash)
+		var ms float64
+		if entry != nil && entry.LatencyTable != nil {
+			if stats, ok := entry.LatencyTable.GetDomainStats(egressTraceDomain); ok {
+				ms = float64(stats.Ewma) / float64(time.Millisecond)
+			}
+		}
+		return &EgressProbeResult{EgressIP: ip.String(), LatencyEwmaMs: ms}, nil
+	}
 	if m.fetcher == nil {
 		return nil, fmt.Errorf("no probe fetcher configured")
 	}
@@ -389,6 +419,16 @@ type LatencyProbeResult struct {
 
 // ProbeLatencySync performs a blocking latency probe and returns the results.
 func (m *ProbeManager) ProbeLatencySync(hash node.Hash) (*LatencyProbeResult, error) {
+	if m.metered.disabledMetered(hash) {
+		return nil, fmt.Errorf("metered node disabled")
+	}
+	if _, _, ok := m.metered.Policy(hash); ok {
+		res, err := m.ProbeEgressSync(hash)
+		if err != nil {
+			return nil, err
+		}
+		return &LatencyProbeResult{LatencyEwmaMs: res.LatencyEwmaMs}, nil
+	}
 	if m.fetcher == nil {
 		return nil, fmt.Errorf("no probe fetcher configured")
 	}
@@ -457,6 +497,12 @@ func (m *ProbeManager) scanEgress() {
 			return true // skip nil outbound
 		}
 
+		if _, _, ok := m.metered.Policy(h); ok {
+			if m.metered.Due(h) {
+				m.enqueueProbe(h, probeTaskKindEgress, probePriorityNormal)
+			}
+			return true
+		}
 		// Check if due: lastAttempt + interval - lookahead <= now.
 		lastCheck := entry.LastEgressUpdateAttempt.Load()
 		if lastCheck > 0 {
@@ -505,6 +551,9 @@ func (m *ProbeManager) scanLatency() {
 			return true // skip nil outbound
 		}
 
+		if _, _, ok := m.metered.Policy(h); ok {
+			return true
+		}
 		if !m.isLatencyProbeDue(entry, now, maxLatencyInterval, maxAuthorityInterval, authorities, lookahead) {
 			return true
 		}
@@ -541,6 +590,12 @@ func (m *ProbeManager) executeTask(task probeTask) {
 		return
 	}
 
+	if _, _, ok := m.metered.Policy(task.key.hash); ok {
+		if task.key.kind == probeTaskKindEgress && m.metered.Due(task.key.hash) {
+			_, _, _ = m.metered.run(m, task.key.hash, "periodic")
+		}
+		return
+	}
 	switch task.key.kind {
 	case probeTaskKindEgress:
 		m.probeEgress(task.key.hash, entry)
@@ -782,7 +837,10 @@ func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testU
 }
 
 func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressProbeErrorStage, error) {
-	body, latency, err := m.fetcher(hash, egressTraceURL)
+	return m.performEgressProbeWithFetcher(hash, m.fetcher)
+}
+func (m *ProbeManager) performEgressProbeWithFetcher(hash node.Hash, fetcher Fetcher) (netip.Addr, egressProbeErrorStage, error) {
+	body, latency, err := fetcher(hash, egressTraceURL)
 	if err != nil {
 		m.pool.RecordResult(hash, false)
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)

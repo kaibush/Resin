@@ -2,6 +2,7 @@
 package subscription
 
 import (
+	"github.com/Resinat/Resin/internal/probepolicy"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,10 +117,11 @@ type Subscription struct {
 	opMu sync.Mutex
 
 	// Mutable fields guarded by mu.
-	mu         sync.RWMutex
-	url        string
-	sourceType string
-	content    string
+	probePolicy probepolicy.ProbePolicy
+	mu          sync.RWMutex
+	url         string
+	sourceType  string
+	content     string
 	// updateIntervalNs is the configured subscription refresh interval.
 	updateIntervalNs      int64
 	name                  string
@@ -383,4 +385,15 @@ func cloneTags(tags []string) []string {
 	cp := make([]string, len(tags))
 	copy(cp, tags)
 	return cp
+}
+
+func (s *Subscription) ProbePolicy() probepolicy.ProbePolicy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.probePolicy
+}
+func (s *Subscription) SetProbePolicy(p probepolicy.ProbePolicy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probePolicy = p
 }

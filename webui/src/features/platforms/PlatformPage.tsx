@@ -287,10 +287,17 @@ export function PlatformPage() {
                 </Select>
               </div>
 
+              <div className="field-group field-span-2">
+                <label className="field-label" htmlFor="create-egress-age">{t("付费节点出口验证最大年龄")}</label>
+                <Input id="create-egress-age" {...createForm.register("egress_verification_max_age")} />
+                <p className="muted">{t("0s 继承订阅；例如 1h 会在使用前验证超过一小时的出口信息。取平台与订阅中更短的期限，会增加探测费用。")}</p>
+              </div>
+
               <div className="field-group">
                 <label className="field-label" htmlFor="create-passive-circuit-breaker" style={{ visibility: "hidden" }}>
                   {t("禁用请求失败熔断")}
                 </label>
+
                 <div className="subscription-switch-item">
                   <label className="subscription-switch-label" htmlFor="create-passive-circuit-breaker">
                     <span>{t("禁用请求失败熔断")}</span>

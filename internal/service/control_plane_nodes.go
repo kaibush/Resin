@@ -1,6 +1,8 @@
 package service
 
 import (
+	"errors"
+	"github.com/Resinat/Resin/internal/probepolicy"
 	"strings"
 	"time"
 
@@ -231,6 +233,9 @@ func (s *ControlPlaneService) ProbeEgress(hashStr string) (*probe.EgressProbeRes
 	}
 	result, err := s.ProbeMgr.ProbeEgressSync(h)
 	if err != nil {
+		if errors.Is(err, probepolicy.ErrBudget) {
+			return nil, conflict("probe traffic budget exhausted")
+		}
 		return nil, internal("egress probe failed", err)
 	}
 	result.Region = entry.GetRegion(nil)
@@ -251,6 +256,9 @@ func (s *ControlPlaneService) ProbeLatency(hashStr string) (*probe.LatencyProbeR
 	}
 	result, err := s.ProbeMgr.ProbeLatencySync(h)
 	if err != nil {
+		if errors.Is(err, probepolicy.ErrBudget) {
+			return nil, conflict("probe traffic budget exhausted")
+		}
 		return nil, internal("latency probe failed", err)
 	}
 	return result, nil

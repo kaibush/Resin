@@ -2,9 +2,11 @@
 package model
 
 import "encoding/json"
+import "github.com/Resinat/Resin/internal/probepolicy"
 
 // Platform represents a routing platform.
 type Platform struct {
+	EgressVerificationMaxAgeNs       int64  `json:"egress_verification_max_age_ns"`
 	ID                               string `json:"id"`
 	Name                             string `json:"name"`
 	StickyTTLNs                      int64  `json:"sticky_ttl_ns"`
@@ -20,18 +22,19 @@ type Platform struct {
 
 // Subscription represents a node subscription source.
 type Subscription struct {
-	ID                        string `json:"id"`
-	Name                      string `json:"name"`
-	SourceType                string `json:"source_type"`
-	URL                       string `json:"url"`
-	Content                   string `json:"content"`
-	UpdateIntervalNs          int64  `json:"update_interval_ns"`
-	Enabled                   bool   `json:"enabled"`
-	Ephemeral                 bool   `json:"ephemeral"`
-	IncrementalAliveNodes     bool   `json:"incremental_alive_nodes"`
-	EphemeralNodeEvictDelayNs int64  `json:"ephemeral_node_evict_delay_ns"`
-	CreatedAtNs               int64  `json:"created_at_ns"`
-	UpdatedAtNs               int64  `json:"updated_at_ns"`
+	ProbePolicy               probepolicy.ProbePolicy `json:"probe_policy"`
+	ID                        string                  `json:"id"`
+	Name                      string                  `json:"name"`
+	SourceType                string                  `json:"source_type"`
+	URL                       string                  `json:"url"`
+	Content                   string                  `json:"content"`
+	UpdateIntervalNs          int64                   `json:"update_interval_ns"`
+	Enabled                   bool                    `json:"enabled"`
+	Ephemeral                 bool                    `json:"ephemeral"`
+	IncrementalAliveNodes     bool                    `json:"incremental_alive_nodes"`
+	EphemeralNodeEvictDelayNs int64                   `json:"ephemeral_node_evict_delay_ns"`
+	CreatedAtNs               int64                   `json:"created_at_ns"`
+	UpdatedAtNs               int64                   `json:"updated_at_ns"`
 }
 
 // Endpoint represents a persisted custom inbound listener. The environment-

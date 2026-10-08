@@ -4,6 +4,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"github.com/Resinat/Resin/internal/probepolicy"
 	"net/http"
 	"os"
 
@@ -54,6 +55,7 @@ var (
 		ResinError: "ACCOUNT_REJECTED",
 		Message:    "Account extraction failed and platform rejects unmatched requests",
 	}
+	ErrProbeBudget      = &ProxyError{HTTPCode: http.StatusServiceUnavailable, ResinError: "PROBE_BUDGET_EXHAUSTED", Message: "Probe traffic budget exhausted; node verification is required"}
 	ErrNoAvailableNodes = &ProxyError{
 		HTTPCode:   http.StatusServiceUnavailable,
 		ResinError: "NO_AVAILABLE_NODES",
@@ -132,6 +134,9 @@ func classifyConnectError(err error) *ProxyError {
 
 // mapRouteError translates a routing-layer error into a ProxyError.
 func mapRouteError(err error) *ProxyError {
+	if errors.Is(err, probepolicy.ErrBudget) {
+		return ErrProbeBudget
+	}
 	if errors.Is(err, routing.ErrPlatformNotFound) {
 		return ErrPlatformNotFound
 	}

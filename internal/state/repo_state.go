@@ -152,8 +152,8 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 		INSERT INTO platforms (id, name, sticky_ttl_ns, regex_filters_json, region_filters_json,
 		                       reverse_proxy_miss_action, reverse_proxy_empty_account_behavior,
 		                       reverse_proxy_fixed_account_header, allocation_policy,
-		                       passive_circuit_breaker_disabled, updated_at_ns)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name                     = excluded.name,
 			sticky_ttl_ns            = excluded.sticky_ttl_ns,
@@ -164,10 +164,11 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 			reverse_proxy_fixed_account_header   = excluded.reverse_proxy_fixed_account_header,
 			allocation_policy        = excluded.allocation_policy,
 			passive_circuit_breaker_disabled = excluded.passive_circuit_breaker_disabled,
+			egress_verification_max_age_ns=excluded.egress_verification_max_age_ns,
 			updated_at_ns            = excluded.updated_at_ns
 	`, p.ID, p.Name, p.StickyTTLNs, regexFiltersJSON, regionFiltersJSON,
 		p.ReverseProxyMissAction, p.ReverseProxyEmptyAccountBehavior, p.ReverseProxyFixedAccountHeader,
-		p.AllocationPolicy, p.PassiveCircuitBreakerDisabled, p.UpdatedAtNs)
+		p.AllocationPolicy, p.PassiveCircuitBreakerDisabled, p.UpdatedAtNs, p.EgressVerificationMaxAgeNs)
 	if err != nil {
 		if isSQLiteUniqueConstraint(err) {
 			return fmt.Errorf("%w: platform name already exists", ErrConflict)
@@ -223,7 +224,7 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 	row := r.db.QueryRow(`SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json,
 			reverse_proxy_miss_action, reverse_proxy_empty_account_behavior,
 			reverse_proxy_fixed_account_header, allocation_policy,
-			passive_circuit_breaker_disabled, updated_at_ns
+			passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns
 			FROM platforms WHERE id = ?`, id)
 
 	var p model.Platform
@@ -231,7 +232,7 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 	var passiveCircuitBreakerDisabled int
 	if err := row.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 		&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
-		&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs); err != nil {
+		&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs, &p.EgressVerificationMaxAgeNs); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -253,7 +254,7 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 
 // ListPlatforms returns all platforms.
 func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
-	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, updated_at_ns FROM platforms")
+	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns FROM platforms")
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +267,7 @@ func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
 		var passiveCircuitBreakerDisabled int
 		if err := rows.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 			&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
-			&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs); err != nil {
+			&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs, &p.EgressVerificationMaxAgeNs); err != nil {
 			return nil, err
 		}
 		p.PassiveCircuitBreakerDisabled = passiveCircuitBreakerDisabled != 0
@@ -290,6 +291,13 @@ func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
 // UpsertSubscription inserts or updates a subscription by ID.
 // On update, created_at_ns is preserved (not overwritten).
 func (r *StateRepo) UpsertSubscription(s model.Subscription) error {
+	if err := s.ProbePolicy.Validate(); err != nil {
+		return err
+	}
+	policyJSON, err := json.Marshal(s.ProbePolicy)
+	if err != nil {
+		return err
+	}
 	// Validate minimum update interval (30 seconds).
 	const minInterval = int64(30 * time.Second)
 	if s.UpdateIntervalNs < minInterval {
@@ -305,10 +313,10 @@ func (r *StateRepo) UpsertSubscription(s model.Subscription) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	_, err := r.db.Exec(`
+	_, err = r.db.Exec(`
 			INSERT INTO subscriptions (id, name, source_type, url, content, update_interval_ns, enabled,
-			                           ephemeral, incremental_alive_nodes, ephemeral_node_evict_delay_ns, created_at_ns, updated_at_ns)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			                           ephemeral, incremental_alive_nodes, ephemeral_node_evict_delay_ns, created_at_ns, updated_at_ns, probe_policy_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
 				name               = excluded.name,
 				source_type        = excluded.source_type,
@@ -319,9 +327,10 @@ func (r *StateRepo) UpsertSubscription(s model.Subscription) error {
 				ephemeral          = excluded.ephemeral,
 				incremental_alive_nodes = excluded.incremental_alive_nodes,
 				ephemeral_node_evict_delay_ns = excluded.ephemeral_node_evict_delay_ns,
+				probe_policy_json = excluded.probe_policy_json,
 				updated_at_ns      = excluded.updated_at_ns
 		`, s.ID, s.Name, s.SourceType, s.URL, s.Content, s.UpdateIntervalNs, s.Enabled,
-		s.Ephemeral, s.IncrementalAliveNodes, s.EphemeralNodeEvictDelayNs, s.CreatedAtNs, s.UpdatedAtNs)
+		s.Ephemeral, s.IncrementalAliveNodes, s.EphemeralNodeEvictDelayNs, s.CreatedAtNs, s.UpdatedAtNs, string(policyJSON))
 	return err
 }
 
@@ -344,7 +353,7 @@ func (r *StateRepo) DeleteSubscription(id string) error {
 // ListSubscriptions returns all subscriptions.
 func (r *StateRepo) ListSubscriptions() ([]model.Subscription, error) {
 	rows, err := r.db.Query(`SELECT id, name, source_type, url, content, update_interval_ns, enabled,
-		ephemeral, incremental_alive_nodes, ephemeral_node_evict_delay_ns, created_at_ns, updated_at_ns FROM subscriptions`)
+		ephemeral, incremental_alive_nodes, ephemeral_node_evict_delay_ns, created_at_ns, updated_at_ns, probe_policy_json FROM subscriptions`)
 	if err != nil {
 		return nil, err
 	}
@@ -353,8 +362,15 @@ func (r *StateRepo) ListSubscriptions() ([]model.Subscription, error) {
 	var result []model.Subscription
 	for rows.Next() {
 		var s model.Subscription
+		var policyJSON string
 		if err := rows.Scan(&s.ID, &s.Name, &s.SourceType, &s.URL, &s.Content, &s.UpdateIntervalNs, &s.Enabled,
-			&s.Ephemeral, &s.IncrementalAliveNodes, &s.EphemeralNodeEvictDelayNs, &s.CreatedAtNs, &s.UpdatedAtNs); err != nil {
+			&s.Ephemeral, &s.IncrementalAliveNodes, &s.EphemeralNodeEvictDelayNs, &s.CreatedAtNs, &s.UpdatedAtNs, &policyJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(policyJSON), &s.ProbePolicy); err != nil {
+			return nil, err
+		}
+		if err := s.ProbePolicy.Validate(); err != nil {
 			return nil, err
 		}
 		if s.SourceType == "" {

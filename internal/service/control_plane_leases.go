@@ -15,13 +15,14 @@ import (
 
 // LeaseResponse is the API response for a lease.
 type LeaseResponse struct {
-	PlatformID   string `json:"platform_id"`
-	Account      string `json:"account"`
-	NodeHash     string `json:"node_hash"`
-	NodeTag      string `json:"node_tag"`
-	EgressIP     string `json:"egress_ip"`
-	Expiry       string `json:"expiry"`
-	LastAccessed string `json:"last_accessed"`
+	EgressVerifiedAt string `json:"egress_verified_at,omitempty"`
+	PlatformID       string `json:"platform_id"`
+	Account          string `json:"account"`
+	NodeHash         string `json:"node_hash"`
+	NodeTag          string `json:"node_tag"`
+	EgressIP         string `json:"egress_ip"`
+	Expiry           string `json:"expiry"`
+	LastAccessed     string `json:"last_accessed"`
 }
 
 func leaseToResponse(lease model.Lease, nodeTag string) LeaseResponse {
@@ -58,14 +59,14 @@ func (s *ControlPlaneService) ListLeases(platformID string) ([]LeaseResponse, er
 	}
 	var result []LeaseResponse
 	s.Router.RangeLeases(platformID, func(account string, lease routing.Lease) bool {
-		result = append(result, leaseToResponse(model.Lease{
+		result = append(result, s.withLeaseVerification(leaseToResponse(model.Lease{
 			PlatformID:     platformID,
 			Account:        account,
 			NodeHash:       lease.NodeHash.Hex(),
 			EgressIP:       lease.EgressIP.String(),
 			ExpiryNs:       lease.ExpiryNs,
 			LastAccessedNs: lease.LastAccessedNs,
-		}, s.resolveLeaseNodeTag(lease.NodeHash)))
+		}, s.resolveLeaseNodeTag(lease.NodeHash))))
 		return true
 	})
 	if result == nil {
@@ -83,7 +84,7 @@ func (s *ControlPlaneService) GetLease(platformID, account string) (*LeaseRespon
 	if ml == nil {
 		return nil, notFound("lease not found")
 	}
-	resp := leaseToResponse(*ml, s.resolveLeaseNodeTagFromHex(ml.NodeHash))
+	resp := s.withLeaseVerification(leaseToResponse(*ml, s.resolveLeaseNodeTagFromHex(ml.NodeHash)))
 	return &resp, nil
 }
 
@@ -168,4 +169,21 @@ func (s *ControlPlaneService) GetIPLoad(platformID string) ([]IPLoadEntry, error
 		})
 	}
 	return result, nil
+}
+
+// Only display a verification timestamp when it belongs to the lease's IP.
+func (s *ControlPlaneService) withLeaseVerification(resp LeaseResponse) LeaseResponse {
+	if s == nil || s.Pool == nil {
+		return resp
+	}
+	h, err := node.ParseHex(resp.NodeHash)
+	if err != nil {
+		return resp
+	}
+	if e, ok := s.Pool.GetEntry(h); ok && e.GetEgressIP().String() == resp.EgressIP {
+		if ns := e.LastEgressUpdate.Load(); ns > 0 {
+			resp.EgressVerifiedAt = time.Unix(0, ns).UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return resp
 }

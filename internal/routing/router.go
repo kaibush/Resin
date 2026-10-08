@@ -28,6 +28,8 @@ type PoolAccessor interface {
 
 // Router handles route selection and lease management.
 type Router struct {
+	prepareRoute    func(*platform.Platform, node.Hash) error
+	verifyNode      func(*platform.Platform, node.Hash) error
 	governance      *governanceClient
 	pool            PoolAccessor
 	states          *xsync.Map[string, *PlatformRoutingState]
@@ -38,9 +40,11 @@ type Router struct {
 }
 
 type RouterConfig struct {
-	Pool        PoolAccessor
-	Authorities func() []string
-	P2CWindow   func() time.Duration
+	PrepareRoute func(*platform.Platform, node.Hash) error
+	VerifyNode   func(*platform.Platform, node.Hash) error
+	Pool         PoolAccessor
+	Authorities  func() []string
+	P2CWindow    func() time.Duration
 	// OnLeaseEvent is called synchronously; handlers must stay lightweight.
 	OnLeaseEvent LeaseEventFunc
 	// NodeTagResolver resolves a node hash to its display tag ("<Sub>/<Tag>").
@@ -51,6 +55,8 @@ type RouterConfig struct {
 func NewRouter(cfg RouterConfig) *Router {
 	return &Router{
 		governance:      newGovernanceClient(),
+		prepareRoute:    cfg.PrepareRoute,
+		verifyNode:      cfg.VerifyNode,
 		pool:            cfg.Pool,
 		states:          xsync.NewMap[string, *PlatformRoutingState](),
 		authorities:     cfg.Authorities,
@@ -145,6 +151,11 @@ func (r *Router) routeRandom(
 	state *PlatformRoutingState,
 	targetDomain string,
 ) (RouteResult, error) {
+	if r.prepareRoute != nil {
+		if err := r.prepareRoute(plat, node.Zero); err != nil {
+			return RouteResult{}, err
+		}
+	}
 	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
 	if err != nil {
 		return RouteResult{}, err
@@ -168,6 +179,19 @@ func (r *Router) routeSticky(
 	var routeErr error
 
 	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+		if r.prepareRoute != nil {
+			h := node.Zero
+			if loaded && !current.IsExpired(time.Now()) {
+				h = current.NodeHash
+			}
+			if err := r.prepareRoute(plat, h); err != nil {
+				routeErr = err
+				return current, xsync.CancelOp
+			}
+		}
+		// Verification can block; start the new lease TTL after it completes.
+		now = time.Now()
+		nowNs = now.UnixNano()
 		decide := r.decideStickyLease
 		if r.governance != nil {
 			decide = func(p *platform.Platform, s *PlatformRoutingState, a, t string, n time.Time, _ int64, c Lease, l bool) (Lease, xsync.ComputeOp, RouteResult, error) {
@@ -312,6 +336,15 @@ func (r *Router) tryLeaseSameIPRotation(
 		return Lease{}, RouteResult{}, false
 	}
 
+	if r.verifyNode != nil {
+		if err := r.verifyNode(plat, bestHash); err != nil {
+			return Lease{}, RouteResult{}, false
+		}
+		entry, exists := r.pool.GetEntry(bestHash)
+		if !exists || !plat.View().Contains(bestHash) || entry.GetEgressIP() != current.EgressIP {
+			return Lease{}, RouteResult{}, false
+		}
+	}
 	newLease := current
 	newLease.NodeHash = bestHash
 	newLease.LastAccessedNs = nowNs
@@ -419,6 +452,14 @@ func (r *Router) selectLiveRandomRoute(
 		}
 		entry, ok := r.pool.GetEntry(h)
 		if ok {
+			if r.verifyNode != nil {
+				if err := r.verifyNode(plat, h); err != nil {
+					return node.Zero, nil, err
+				}
+				if !plat.View().Contains(h) || !entry.IsHealthy() {
+					continue
+				}
+			}
 			return h, entry, nil
 		}
 		lastMissing = h

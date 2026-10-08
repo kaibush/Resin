@@ -120,6 +120,11 @@ func (r *Router) decideGovernedLease(plat *platform.Platform, state *PlatformRou
 	if err != nil || ipErr != nil {
 		return current, xsync.CancelOp, RouteResult{}, ErrNoAvailableNodes
 	}
+	if r.verifyNode != nil {
+		if err := r.verifyNode(plat, hash); err != nil {
+			return current, xsync.CancelOp, RouteResult{}, err
+		}
+	}
 	entry, ok := r.pool.GetEntry(hash)
 	if !ok || !plat.View().Contains(hash) || entry.GetEgressIP().Unmap() != ip.Unmap() || entry.Outbound.Load() == nil {
 		return current, xsync.CancelOp, RouteResult{}, ErrNoAvailableNodes

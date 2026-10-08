@@ -32,6 +32,7 @@ function parseMissAction(raw: ApiPlatform["reverse_proxy_miss_action"]): Platfor
 function normalizePlatform(raw: ApiPlatform): Platform {
   return {
     ...raw,
+    egress_verification_max_age: raw.egress_verification_max_age || "0s",
     reverse_proxy_miss_action: parseMissAction(raw.reverse_proxy_miss_action),
     regex_filters: Array.isArray(raw.regex_filters) ? raw.regex_filters : [],
     region_filters: Array.isArray(raw.region_filters) ? raw.region_filters : [],
@@ -63,6 +64,7 @@ function normalizeLease(raw: ApiPlatformLease): PlatformLease {
     node_hash: typeof raw.node_hash === "string" ? raw.node_hash : "",
     node_tag: typeof raw.node_tag === "string" ? raw.node_tag : "",
     egress_ip: typeof raw.egress_ip === "string" ? raw.egress_ip : "",
+    egress_verified_at: typeof raw.egress_verified_at === "string" ? raw.egress_verified_at : "",
     expiry: typeof raw.expiry === "string" ? raw.expiry : "",
     last_accessed: typeof raw.last_accessed === "string" ? raw.last_accessed : "",
   };

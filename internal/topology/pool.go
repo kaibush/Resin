@@ -23,7 +23,8 @@ import (
 // It uses xsync.Map for concurrent access and xsync.Compute for atomic
 // AddNodeFromSub / RemoveNodeFromSub operations.
 type GlobalNodePool struct {
-	nodes *xsync.Map[node.Hash, *node.NodeEntry]
+	onPassiveResult func(node.Hash, bool)
+	nodes           *xsync.Map[node.Hash, *node.NodeEntry]
 
 	// Platform references for dirty-notify.
 	platMu         sync.RWMutex
@@ -565,6 +566,9 @@ func (p *GlobalNodePool) RecordResult(hash node.Hash, success bool) {
 func (p *GlobalNodePool) RecordPassiveResult(platformID string, hash node.Hash, success bool) {
 	if success || !p.passiveCircuitBreakerDisabled(platformID) {
 		p.RecordResult(hash, success)
+		if p.onPassiveResult != nil {
+			p.onPassiveResult(hash, success)
+		}
 	}
 }
 
@@ -700,3 +704,6 @@ func (p *GlobalNodePool) isAuthorityDomain(domain string) bool {
 	}
 	return false
 }
+
+// SetOnPassiveResult must be called before proxy serving starts.
+func (p *GlobalNodePool) SetOnPassiveResult(fn func(node.Hash, bool)) { p.onPassiveResult = fn }

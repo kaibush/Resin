@@ -6,6 +6,8 @@ import type {
   SubscriptionUpdateInput,
 } from "./types";
 
+import { defaultProbePolicy } from "./types";
+
 const basePath = "/api/v1/subscriptions";
 
 type ApiSubscription = Omit<Subscription, "last_checked" | "last_updated" | "last_error"> & {
@@ -19,6 +21,8 @@ type ApiSubscription = Omit<Subscription, "last_checked" | "last_updated" | "las
 function normalizeSubscription(raw: ApiSubscription): Subscription {
   return {
     ...raw,
+    probe_policy: raw.probe_policy?.mode === "metered" ? raw.probe_policy : { ...defaultProbePolicy },
+    probe_usage: raw.probe_usage ?? [],
     source_type: raw.source_type ?? "remote",
     content: raw.content ?? "",
     last_checked: raw.last_checked || "",

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Resinat/Resin/internal/probepolicy"
 	"strings"
 	"time"
 
@@ -22,22 +23,25 @@ import (
 
 // SubscriptionResponse is the API response for a subscription.
 type SubscriptionResponse struct {
-	ID                      string `json:"id"`
-	Name                    string `json:"name"`
-	SourceType              string `json:"source_type"`
-	URL                     string `json:"url"`
-	Content                 string `json:"content"`
-	UpdateInterval          string `json:"update_interval"`
-	NodeCount               int    `json:"node_count"`
-	HealthyNodeCount        int    `json:"healthy_node_count"`
-	Ephemeral               bool   `json:"ephemeral"`
-	IncrementalAliveNodes   bool   `json:"incremental_alive_nodes"`
-	EphemeralNodeEvictDelay string `json:"ephemeral_node_evict_delay"`
-	Enabled                 bool   `json:"enabled"`
-	CreatedAt               string `json:"created_at"`
-	LastChecked             string `json:"last_checked,omitempty"`
-	LastUpdated             string `json:"last_updated,omitempty"`
-	LastError               string `json:"last_error,omitempty"`
+	ProbePolicy             probepolicy.ProbePolicy `json:"probe_policy"`
+	ProbeUsage              []state.ProbeUsage      `json:"probe_usage"`
+	ProbeUsageError         string                  `json:"probe_usage_error,omitempty"`
+	ID                      string                  `json:"id"`
+	Name                    string                  `json:"name"`
+	SourceType              string                  `json:"source_type"`
+	URL                     string                  `json:"url"`
+	Content                 string                  `json:"content"`
+	UpdateInterval          string                  `json:"update_interval"`
+	NodeCount               int                     `json:"node_count"`
+	HealthyNodeCount        int                     `json:"healthy_node_count"`
+	Ephemeral               bool                    `json:"ephemeral"`
+	IncrementalAliveNodes   bool                    `json:"incremental_alive_nodes"`
+	EphemeralNodeEvictDelay string                  `json:"ephemeral_node_evict_delay"`
+	Enabled                 bool                    `json:"enabled"`
+	CreatedAt               string                  `json:"created_at"`
+	LastChecked             string                  `json:"last_checked,omitempty"`
+	LastUpdated             string                  `json:"last_updated,omitempty"`
+	LastError               string                  `json:"last_error,omitempty"`
 }
 
 func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) SubscriptionResponse {
@@ -64,6 +68,7 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 	}
 
 	resp := SubscriptionResponse{
+		ProbePolicy: sub.ProbePolicy(), ProbeUsage: []state.ProbeUsage{},
 		ID:                      sub.ID,
 		Name:                    sub.Name(),
 		SourceType:              sub.SourceType(),
@@ -83,6 +88,14 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 	}
 	if lu := sub.LastUpdatedNs.Load(); lu > 0 {
 		resp.LastUpdated = time.Unix(0, lu).UTC().Format(time.RFC3339Nano)
+	}
+	if s.Engine != nil && s.Engine.StateRepo != nil {
+		usage, err := s.Engine.ProbeUsage(sub.ID, time.Now())
+		if err == nil {
+			resp.ProbeUsage = usage
+		} else {
+			resp.ProbeUsageError = "probe usage unavailable"
+		}
 	}
 	resp.LastError = sub.GetLastError()
 	return resp
@@ -116,15 +129,16 @@ func (s *ControlPlaneService) GetSubscription(id string) (*SubscriptionResponse,
 
 // CreateSubscriptionRequest holds create subscription parameters.
 type CreateSubscriptionRequest struct {
-	Name                    *string `json:"name"`
-	SourceType              *string `json:"source_type"`
-	URL                     *string `json:"url"`
-	Content                 *string `json:"content"`
-	UpdateInterval          *string `json:"update_interval"`
-	Enabled                 *bool   `json:"enabled"`
-	Ephemeral               *bool   `json:"ephemeral"`
-	IncrementalAliveNodes   *bool   `json:"incremental_alive_nodes"`
-	EphemeralNodeEvictDelay *string `json:"ephemeral_node_evict_delay"`
+	ProbePolicy             *probepolicy.ProbePolicy `json:"probe_policy"`
+	Name                    *string                  `json:"name"`
+	SourceType              *string                  `json:"source_type"`
+	URL                     *string                  `json:"url"`
+	Content                 *string                  `json:"content"`
+	UpdateInterval          *string                  `json:"update_interval"`
+	Enabled                 *bool                    `json:"enabled"`
+	Ephemeral               *bool                    `json:"ephemeral"`
+	IncrementalAliveNodes   *bool                    `json:"incremental_alive_nodes"`
+	EphemeralNodeEvictDelay *string                  `json:"ephemeral_node_evict_delay"`
 }
 
 const minSubscriptionUpdateInterval = 30 * time.Second
@@ -217,11 +231,19 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		ephemeralNodeEvictDelay = d
 	}
 
+	policy := probepolicy.ProbePolicy{}
+	if req.ProbePolicy != nil {
+		policy = *req.ProbePolicy
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, invalidArg(err.Error())
+	}
 	id := uuid.New().String()
 	now := time.Now().UnixNano()
 
 	ms := model.Subscription{
 		ID:                        id,
+		ProbePolicy:               policy,
 		Name:                      name,
 		SourceType:                sourceType,
 		URL:                       subURL,
@@ -239,6 +261,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 	}
 
 	sub := subscription.NewSubscription(id, name, subURL, enabled, ephemeral)
+	sub.SetProbePolicy(policy)
 	sub.SetFetchConfig(subURL, int64(updateInterval))
 	sub.SetSourceType(sourceType)
 	sub.SetContent(content)
@@ -271,6 +294,21 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		return nil, notFound("subscription not found")
 	}
 
+	policy := sub.ProbePolicy()
+	if raw, ok := patch["probe_policy"]; ok {
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return nil, invalidArg("invalid probe_policy")
+		}
+		var next probepolicy.ProbePolicy
+		if err = json.Unmarshal(data, &next); err != nil {
+			return nil, invalidArg("invalid probe_policy")
+		}
+		if err = next.Validate(); err != nil {
+			return nil, invalidArg(err.Error())
+		}
+		policy = next
+	}
 	// Track what changed for side-effects.
 	nameChanged := false
 	enabledChanged := false
@@ -367,6 +405,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	now := time.Now().UnixNano()
 	ms := model.Subscription{
 		ID:                        id,
+		ProbePolicy:               policy,
 		Name:                      newName,
 		SourceType:                sourceType,
 		URL:                       newURL,
@@ -383,6 +422,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		return nil, internal("persist subscription", err)
 	}
 
+	sub.SetProbePolicy(policy)
 	// Apply side-effects via scheduler.
 	sub.SetFetchConfig(newURL, newInterval)
 	sub.SetContent(newContent)
@@ -499,7 +539,12 @@ func (s *ControlPlaneService) cleanupSubscriptionCircuitOpenNodesWithHook(
 		cleanedCount, evicted = topology.CleanupSubscriptionNodesWithConfirmNoLock(
 			lockedSub,
 			s.Pool,
-			shouldCleanupSubscriptionNode,
+			func(entry *node.NodeEntry) bool {
+				if lockedSub.ProbePolicy().Mode == "metered" && entry != nil && entry.IsUnverified() && entry.HasOutbound() {
+					return false
+				}
+				return shouldCleanupSubscriptionNode(entry)
+			},
 			betweenScans,
 		)
 	})

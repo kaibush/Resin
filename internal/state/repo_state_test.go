@@ -80,6 +80,7 @@ func TestMigrateStateDB_AddsEnabledToExistingEndpoints(t *testing.T) {
 	defer db.Close()
 
 	_, err = db.Exec(`
+		CREATE TABLE subscriptions (id TEXT PRIMARY KEY);
 		CREATE TABLE schema_migrations (version uint64 NOT NULL PRIMARY KEY, dirty bool NOT NULL);
 		INSERT INTO schema_migrations (version, dirty) VALUES (7, 0);
 		CREATE TABLE platforms (
@@ -128,6 +129,7 @@ func TestMigrateStateDB_ConvertsLegacyRegexFiltersToMustRules(t *testing.T) {
 	defer db.Close()
 
 	_, err = db.Exec(`
+		CREATE TABLE subscriptions (id TEXT PRIMARY KEY);
 		CREATE TABLE schema_migrations (version uint64 NOT NULL PRIMARY KEY, dirty bool NOT NULL);
 		INSERT INTO schema_migrations (version, dirty) VALUES (8, 0);
 		CREATE TABLE platforms (

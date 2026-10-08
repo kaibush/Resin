@@ -21,6 +21,7 @@ import (
 
 // PlatformResponse is the API response model for a platform.
 type PlatformResponse struct {
+	EgressVerificationMaxAge         string   `json:"egress_verification_max_age"`
 	ID                               string   `json:"id"`
 	Name                             string   `json:"name"`
 	StickyTTL                        string   `json:"sticky_ttl"`
@@ -40,6 +41,7 @@ func platformToResponse(p model.Platform) PlatformResponse {
 	fixedHeader := normalizeHeaderFieldName(p.ReverseProxyFixedAccountHeader)
 	return PlatformResponse{
 		ID:                               p.ID,
+		EgressVerificationMaxAge:         time.Duration(p.EgressVerificationMaxAgeNs).String(),
 		Name:                             p.Name,
 		StickyTTL:                        time.Duration(p.StickyTTLNs).String(),
 		RegexFilters:                     append([]string(nil), p.RegexFilters...),
@@ -67,6 +69,7 @@ func (s *ControlPlaneService) withRoutableNodeCount(resp PlatformResponse) Platf
 }
 
 type platformConfig struct {
+	EgressVerificationMaxAgeNs       int64
 	Name                             string
 	StickyTTLNs                      int64
 	RegexFilters                     []string
@@ -113,6 +116,7 @@ func (s *ControlPlaneService) defaultPlatformConfig(name string) platformConfig 
 func platformConfigFromModel(mp model.Platform) platformConfig {
 	return platformConfig{
 		Name:                             mp.Name,
+		EgressVerificationMaxAgeNs:       mp.EgressVerificationMaxAgeNs,
 		StickyTTLNs:                      mp.StickyTTLNs,
 		RegexFilters:                     append([]string(nil), mp.RegexFilters...),
 		RegionFilters:                    append([]string(nil), mp.RegionFilters...),
@@ -127,6 +131,7 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 	return model.Platform{
 		ID:                               id,
+		EgressVerificationMaxAgeNs:       cfg.EgressVerificationMaxAgeNs,
 		Name:                             cfg.Name,
 		StickyTTLNs:                      cfg.StickyTTLNs,
 		RegexFilters:                     append([]string(nil), cfg.RegexFilters...),
@@ -145,7 +150,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	return platform.NewConfiguredPlatform(
+	plat := platform.NewConfiguredPlatform(
 		id,
 		cfg.Name,
 		compiledRegexFilters,
@@ -156,7 +161,9 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.ReverseProxyFixedAccountHeader,
 		cfg.AllocationPolicy,
 		cfg.PassiveCircuitBreakerDisabled,
-	), nil
+	)
+	plat.EgressVerificationMaxAgeNs = cfg.EgressVerificationMaxAgeNs
+	return plat, nil
 }
 
 func validatePlatformMissAction(raw string) *ServiceError {
@@ -256,6 +263,9 @@ func setPlatformAllocationPolicy(cfg *platformConfig, policy string) *ServiceErr
 }
 
 func validatePlatformConfig(cfg *platformConfig, validateRegionFilters bool) *ServiceError {
+	if cfg.EgressVerificationMaxAgeNs != 0 && cfg.EgressVerificationMaxAgeNs < int64(30*time.Second) {
+		return invalidArg("egress_verification_max_age: must be 0s or >= 30s")
+	}
 	if validateRegionFilters {
 		if err := platform.ValidateRegionFilters(cfg.RegionFilters); err != nil {
 			return invalidArg(err.Error())
@@ -325,6 +335,7 @@ func (s *ControlPlaneService) GetPlatform(id string) (*PlatformResponse, error) 
 
 // CreatePlatformRequest holds create platform parameters.
 type CreatePlatformRequest struct {
+	EgressVerificationMaxAge         *string  `json:"egress_verification_max_age"`
 	Name                             *string  `json:"name"`
 	StickyTTL                        *string  `json:"sticky_ttl"`
 	RegexFilters                     []string `json:"regex_filters"`
@@ -387,6 +398,13 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 		if err := setPlatformAllocationPolicy(&cfg, *req.AllocationPolicy); err != nil {
 			return nil, err
 		}
+	}
+	if req.EgressVerificationMaxAge != nil {
+		d, err := time.ParseDuration(*req.EgressVerificationMaxAge)
+		if err != nil {
+			return nil, invalidArg("invalid egress_verification_max_age")
+		}
+		cfg.EgressVerificationMaxAgeNs = int64(d)
 	}
 	if req.PassiveCircuitBreakerDisabled != nil {
 		cfg.PassiveCircuitBreakerDisabled = *req.PassiveCircuitBreakerDisabled
@@ -502,6 +520,11 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 		if err := setPlatformAllocationPolicy(&cfg, ap); err != nil {
 			return nil, err
 		}
+	}
+	if d, ok, err := patch.optionalDurationString("egress_verification_max_age"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.EgressVerificationMaxAgeNs = int64(d)
 	}
 	if disabled, ok, err := patch.optionalBool("passive_circuit_breaker_disabled"); err != nil {
 		return nil, err

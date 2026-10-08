@@ -933,7 +933,9 @@ export function NodesPage() {
                     })()}
                   </div>
                   <div>
-                    <span>{t("上次探测")}</span>
+                    <span>{t("出口 IP 上次验证")}</span>
+ <p>{formatDateTime(detailNode.last_egress_update || "")}</p>
+ <span>{t("上次探测")}</span>
                     <p>{formatDateTime(detailNode.last_latency_probe_attempt || "")}</p>
                   </div>
                 </div>

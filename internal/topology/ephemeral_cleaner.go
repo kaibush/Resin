@@ -120,6 +120,9 @@ func (c *EphemeralCleaner) sweepOneSubscription(
 			sub,
 			c.pool,
 			func(entry *node.NodeEntry) bool {
+				if sub.ProbePolicy().Mode == "metered" && entry != nil && entry.IsUnverified() && entry.HasOutbound() {
+					return false
+				}
 				return c.shouldEvictEntry(entry, now, evictDelayNs)
 			},
 			betweenScans,

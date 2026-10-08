@@ -14,6 +14,7 @@ export type Platform = {
   reverse_proxy_fixed_account_header: string;
   allocation_policy: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled: boolean;
+  egress_verification_max_age: string;
   updated_at: string;
 };
 
@@ -34,6 +35,7 @@ export type PlatformCreateInput = {
   reverse_proxy_fixed_account_header?: string;
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
+  egress_verification_max_age?: string;
 };
 
 export type PlatformUpdateInput = {
@@ -46,9 +48,11 @@ export type PlatformUpdateInput = {
   reverse_proxy_fixed_account_header?: string;
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
+  egress_verification_max_age?: string;
 };
 
 export type PlatformLease = {
+  egress_verified_at?: string;
   platform_id: string;
   account: string;
   node_hash: string;

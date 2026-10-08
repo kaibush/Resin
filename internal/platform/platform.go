@@ -25,8 +25,9 @@ type GetEntryFunc func(node.Hash) (*node.NodeEntry, bool)
 
 // Platform represents a routing platform with its filtered routable view.
 type Platform struct {
-	ID   string
-	Name string
+	EgressVerificationMaxAgeNs int64 `json:"egress_verification_max_age_ns"`
+	ID                         string
+	Name                       string
 
 	// Filter configuration.
 	RegexFilters  node.TagFilter

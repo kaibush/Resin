@@ -1,4 +1,23 @@
+export type ProbePolicy = {
+  mode: "inherit" | "metered";
+  egress_interval: string;
+  active_window: string;
+  max_egress_age: string;
+  monthly_budget_bytes: number;
+  strict_budget: boolean;
+};
+export const defaultProbePolicy: ProbePolicy = {
+  mode: "inherit", egress_interval: "24h", active_window: "24h",
+  max_egress_age: "24h", monthly_budget_bytes: 1_000_000_000, strict_budget: false,
+};
+export type ProbeUsage = {
+  day: string; reason: string; ingress_bytes: number; egress_bytes: number;
+  attempts: number; failures: number; reserved_bytes: number;
+};
 export type Subscription = {
+  probe_policy: ProbePolicy;
+  probe_usage: ProbeUsage[];
+  probe_usage_error?: string;
   id: string;
   name: string;
   source_type: "remote" | "local";
@@ -25,6 +44,7 @@ export type PageResponse<T> = {
 };
 
 export type SubscriptionCreateInput = {
+ probe_policy?: ProbePolicy;
   name: string;
   source_type?: "remote" | "local";
   url?: string;
@@ -37,6 +57,7 @@ export type SubscriptionCreateInput = {
 };
 
 export type SubscriptionUpdateInput = {
+ probe_policy?: ProbePolicy;
   name?: string;
   url?: string;
   content?: string;

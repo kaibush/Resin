@@ -317,3 +317,8 @@ func (e *NodeEntry) GetLastError() string {
 	defer e.mu.RUnlock()
 	return e.LastError
 }
+
+// IsUnverified distinguishes an untouched node from a failed probe.
+func (e *NodeEntry) IsUnverified() bool {
+	return e.LastEgressUpdateAttempt.Load() == 0 && e.LastLatencyProbeAttempt.Load() == 0 && e.FailureCount.Load() == 0 && !e.GetEgressIP().IsValid()
+}
