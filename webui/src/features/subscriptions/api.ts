@@ -99,3 +99,8 @@ export async function cleanupSubscriptionCircuitOpenNodes(id: string): Promise<n
   });
   return data.cleaned_count;
 }
+
+export async function getSubscription(id: string): Promise<Subscription> {
+  const data = await apiRequest<ApiSubscription>(`${basePath}/${encodeURIComponent(id)}`);
+  return normalizeSubscription(data);
+}

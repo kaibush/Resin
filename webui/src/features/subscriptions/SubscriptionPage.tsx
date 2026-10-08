@@ -1,10 +1,10 @@
-import { defaultProbePolicy } from "./types";
+import { SubscriptionProbeDialog } from "./SubscriptionProbeDialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, Eye, Filter, Info, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, BarChart3, AlertTriangle, Eye, Filter, Info, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useForm, type UseFormReturn } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
 import { z } from "zod";
 import { Badge } from "../../components/ui/Badge";
@@ -44,7 +44,6 @@ const SUBSCRIPTION_SOURCE_TABS: Array<{ key: SubscriptionSourceType; label: stri
 ];
 
 const subscriptionCreateSchema = z.object({
-  probe_policy: z.object({mode:z.enum(["inherit","metered"]),egress_interval:z.string().min(1),active_window:z.string().min(1),max_egress_age:z.string().min(1),monthly_budget_bytes:z.number().int().positive(),strict_budget:z.boolean()}),
   name: z.string().trim().min(1, "订阅名称不能为空"),
   source_type: z.enum(["remote", "local"]),
   url: z.string(),
@@ -94,7 +93,6 @@ function extractHostname(url: string): string {
 function subscriptionToEditForm(subscription: Subscription): SubscriptionEditForm {
   return {
     name: subscription.name,
-    probe_policy: { ...subscription.probe_policy },
     source_type: subscription.source_type,
     url: subscription.url,
     content: subscription.content ?? "",
@@ -136,6 +134,7 @@ export function SubscriptionPage() {
   const [selectedSubscriptionId, setSelectedSubscriptionId] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [probeDialog, setProbeDialog] = useState<{ subscription: Subscription; mode: "policy" | "usage" } | null>(null);
   const [pendingRefreshIds, setPendingRefreshIds] = useState<Set<string>>(() => new Set());
   const [pendingEnabledStates, setPendingEnabledStates] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const { toasts, showToast, dismissToast } = useToast();
@@ -188,7 +187,6 @@ export function SubscriptionPage() {
     resolver: zodResolver(subscriptionCreateSchema),
     defaultValues: {
       name: "",
-      probe_policy: { ...defaultProbePolicy },
       source_type: "remote",
       url: "",
       content: "",
@@ -207,7 +205,6 @@ export function SubscriptionPage() {
     resolver: zodResolver(subscriptionEditSchema),
     defaultValues: {
       name: "",
-      probe_policy: { ...defaultProbePolicy },
       source_type: "remote",
       url: "",
       content: "",
@@ -263,7 +260,6 @@ export function SubscriptionPage() {
       setCreateModalOpen(false);
       createForm.reset({
         name: "",
-      probe_policy: { ...defaultProbePolicy },
         source_type: "remote",
         url: "",
         content: "",
@@ -288,7 +284,6 @@ export function SubscriptionPage() {
 
       const payload = {
         name: formData.name.trim(),
-        probe_policy: formData.probe_policy,
         update_interval: normalizeSubmitUpdateInterval(formData.source_type, formData.update_interval),
         ephemeral_node_evict_delay: formData.ephemeral_node_evict_delay.trim(),
         enabled: formData.enabled,
@@ -425,8 +420,7 @@ export function SubscriptionPage() {
     onSuccess: async ({ subscription, cleanedCount }) => {
       await invalidateSubscriptionsAndNodes();
       if (cleanedCount > 0) {
-        showToast("success", t("订阅 {{name}} 已清理 {{count}} 个节点", { name: subscription.name,
-    probe_policy: { ...subscription.probe_policy }, count: cleanedCount }));
+        showToast("success", t("订阅 {{name}} 已清理 {{count}} 个节点", { name: subscription.name, count: cleanedCount }));
         return;
       }
       showToast("success", t("订阅 {{name}} 没有可清理的熔断或异常节点", { name: subscription.name }));
@@ -439,7 +433,6 @@ export function SubscriptionPage() {
   const onCreateSubmit = createForm.handleSubmit(async (values) => {
     const payload = {
       name: values.name.trim(),
-      probe_policy: values.probe_policy,
       source_type: values.source_type,
       update_interval: normalizeSubmitUpdateInterval(values.source_type, values.update_interval),
       ephemeral_node_evict_delay: values.ephemeral_node_evict_delay.trim(),
@@ -612,6 +605,12 @@ export function SubscriptionPage() {
               <Button size="sm" variant="ghost" onClick={() => openDrawer(s)} title={t("编辑")}>
                 <Pencil size={14} />
               </Button>
+              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "policy" })} title={t("探测策略")}>
+                <Activity size={14} />{t("探测策略")}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "usage" })} title={t("探测流量")}>
+                <BarChart3 size={14} />{t("探测流量")}
+              </Button>
               <Button
                 size="sm"
                 variant="ghost"
@@ -660,6 +659,7 @@ export function SubscriptionPage() {
       </header>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      {probeDialog && <SubscriptionProbeDialog key={`${probeDialog.mode}:${probeDialog.subscription.id}`} subscription={probeDialog.subscription} mode={probeDialog.mode} onClose={() => setProbeDialog(null)} onSaved={() => showToast("success", t("探测策略已保存"))} />}
 
       <Card className="platform-list-card platform-directory-card">
         <div className="list-card-header">
@@ -813,8 +813,6 @@ export function SubscriptionPage() {
                 )}
 
                 <form className="form-grid" onSubmit={onEditSubmit}>
- <ProbePolicyFields form={editForm} />
- <ProbeUsagePanel subscription={selectedSubscription} />
                   <input type="hidden" {...editForm.register("source_type")} />
 
                   <div className="subscription-switch-item field-span-2">
@@ -1032,7 +1030,6 @@ export function SubscriptionPage() {
             </div>
 
             <form className="form-grid" onSubmit={onCreateSubmit}>
- <ProbePolicyFields form={createForm} />
               <input type="hidden" {...createForm.register("source_type")} />
 
               <div className="subscription-switch-item field-span-2">
@@ -1205,52 +1202,4 @@ export function SubscriptionPage() {
       ) : null}
     </section>
   );
-}
-
-function ProbePolicyFields({ form }: { form: UseFormReturn<SubscriptionCreateForm> }) {
-  const { t } = useI18n();
-  const mode = form.watch("probe_policy.mode");
-  return <div className="field-group field-span-2">
-    <label className="field-label">{t("探测策略")}</label>
-    <select className="input" {...form.register("probe_policy.mode")}>
-      <option value="inherit">{t("继承全局")}</option>
-      <option value="metered">{t("按流量计费")}</option>
-    </select>
-    {mode === "metered" && <>
-      <p>{t("首次使用时验证；空闲节点不主动探测；出口检测同时提供延迟结果。失败后按 5 分钟、30 分钟、2 小时、12 小时退避。")}</p>
-      <div className="form-grid">
-        <label>{t("活跃节点出口检测间隔")}<Input {...form.register("probe_policy.egress_interval")} /></label>
-        <label>{t("近期使用窗口")}<Input {...form.register("probe_policy.active_window")} /></label>
-        <label>{t("使用前出口信息最大年龄")}<Input {...form.register("probe_policy.max_egress_age")} /></label>
-        <label>{t("每月探测预算（字节，1 GB = 1000000000）")}<Input type="number" min={65536} step={1} {...form.register("probe_policy.monthly_budget_bytes", { valueAsNumber: true })} /></label>
-      </div>
-      <label><input type="checkbox" {...form.register("probe_policy.strict_budget")} /> {t("严格预算：首次验证和手动检测也受预算限制")}</label>
-      <p>{t("默认只限制后台检测；严格模式到限后，需验证的新分配会失败。预算按 UTC 月统计。缩短出口有效期会增加费用；检查间隔不能保证上游 IP 不变。")}</p>
-    </>}
-    {form.formState.errors.probe_policy && <p className="field-error">{t("请检查探测策略的间隔和预算。")}</p>}
-  </div>;
-}
-function ProbeUsagePanel({ subscription }: { subscription: Subscription }) {
-  const { t } = useI18n();
-  const rows = subscription.probe_usage ?? [];
-  const bytes = rows.reduce((sum, row) => sum + row.ingress_bytes + row.egress_bytes, 0);
-  const reserved = rows.reduce((sum, row) => sum + row.reserved_bytes, 0);
-  const today = new Date().toISOString().slice(0, 10);
-  const todayBytes = rows.filter(row => row.day === today).reduce((sum, row) => sum + row.ingress_bytes + row.egress_bytes, 0);
-  const limit = subscription.probe_policy.monthly_budget_bytes;
-  const blocked = subscription.probe_policy.mode === "metered" && bytes + reserved + 65536 > limit;
-  return <div className="field-group field-span-2">
-    <strong>{t("探测流量（UTC，估算）")}</strong>
-    {subscription.probe_usage_error ? <p className="field-error">{t("探测统计暂不可用")}</p> : <>
-      <p>{t("今日")} {(todayBytes / 1e6).toFixed(2)} MB · {t("本月")} {(bytes / 1e6).toFixed(2)} MB · ¥{(bytes / 1e9 * 3).toFixed(2)}（¥3/GB）</p>
-      <p>{t("预留额度")} {(reserved / 1e6).toFixed(2)} MB {blocked ? t("后台探测预算不足，周期检测已暂停") : ""}</p>
-      <p>{t("统计包含目标 TLS 流量，不等同于供应商账单。异常退出未结算的预留额度在当月继续占用预算。")}</p>
-      <table><thead><tr><th>{t("原因")}</th><th>{t("次数")}</th><th>{t("失败")}</th><th>{t("上行 MB")}</th><th>{t("下行 MB")}</th></tr></thead><tbody>
-        {([ ["required", "使用前验证"], ["periodic", "周期检测"], ["retry", "故障复测"], ["manual", "手动检测"] ] as const).map(([reason, label]) => {
-          const group = rows.filter(row => row.reason === reason);
-          return <tr key={reason}><td>{t(label)}</td><td>{group.reduce((s,r)=>s+r.attempts,0)}</td><td>{group.reduce((s,r)=>s+r.failures,0)}</td><td>{(group.reduce((s,r)=>s+r.egress_bytes,0)/1e6).toFixed(2)}</td><td>{(group.reduce((s,r)=>s+r.ingress_bytes,0)/1e6).toFixed(2)}</td></tr>;
-        })}
-      </tbody></table>
-    </>}
-  </div>;
 }

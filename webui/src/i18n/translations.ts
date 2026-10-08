@@ -4,6 +4,9 @@ export const APP_TITLE_ZH = "Resin · 高性能粘性代理池";
 const APP_TITLE_EN = "Resin · Sticky Proxy Pool";
 
 const EXACT_ZH_TO_EN: Record<string, string> = {
+  "探测流量": "Probe Traffic",
+  "探测策略已保存": "Probe policy saved",
+  "此处显示按流量计费策略的用量账本；继承全局期间的检测请在探测日志查看。": "This shows metered-policy usage. See Probe Logs for probes made while inheriting global settings.",
   "探测日志": "Probe Logs",
   "查看 Resin 自身的出口和延迟检测，点击记录查看详情。": "View Resin egress and latency probes. Select a record for details.",
   "仅记录实际发起的检测；缓存命中、预算阻止及被动业务反馈不产生记录。": "Only executed probes are logged. Cache hits, budget blocks and passive traffic feedback are excluded.",
