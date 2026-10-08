@@ -8,6 +8,7 @@ import { NodesPage } from "../features/nodes/NodesPage";
 import { RequireAuth } from "../features/auth/RequireAuth";
 import { PlatformDetailPage } from "../features/platforms/PlatformDetailPage";
 import { PlatformPage } from "../features/platforms/PlatformPage";
+import { ProbeLogsPage } from "../features/probeLogs/ProbeLogsPage";
 import { RequestLogsPage } from "../features/requestLogs/RequestLogsPage";
 import { RulesPage } from "../features/rules/RulesPage";
 import { SubscriptionPage } from "../features/subscriptions/SubscriptionPage";
@@ -38,6 +39,7 @@ export function AppRoutes() {
         <Route path="/nodes" element={<NodesRoute />} />
         <Route path="/endpoints" element={<EndpointsPage />} />
         <Route path="/rules" element={<RulesPage />} />
+        <Route path="/probe-logs" element={<ProbeLogsPage />} />
         <Route path="/request-logs" element={<RequestLogsPage />} />
         <Route path="/resources" element={<GeoIPPage />} />
         <Route path="/system-config" element={<SystemConfigPage />} />

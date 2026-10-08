@@ -219,12 +219,15 @@ func (c *MeteredController) run(m *ProbeManager, h node.Hash, reason string, max
 			}
 			return nil, err
 		}
+		row := m.logRow(h, egressTraceURL, "egress", reason)
 		var ingress, egress int64
 		fetch := func(h node.Hash, url string) ([]byte, time.Duration, error) {
 			if m.statsFetcher == nil {
 				return nil, 0, fmt.Errorf("metered stats fetcher unavailable")
 			}
 			body, latency, in, out, err := m.statsFetcher(h, url)
+			row.LatencyMs = latency.Milliseconds()
+			row.BytesMeasured = true
 			ingress += in
 			egress += out
 			if err == nil {
@@ -236,6 +239,12 @@ func (c *MeteredController) run(m *ProbeManager, h node.Hash, reason string, max
 			m.onProbeEvent("egress")
 		}
 		ip, _, probeErr := m.performEgressProbeWithFetcher(h, fetch)
+		row.IngressBytes = ingress
+		row.EgressBytes = egress
+		if ip.IsValid() {
+			row.EgressIP = ip.String()
+		}
+		m.finishLog(row, probeErr)
 		if err := c.repo.FinishProbe(id, day, reason, ProbeTransferLimit, ingress, egress, probeErr != nil); err != nil {
 			return nil, err
 		}

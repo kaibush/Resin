@@ -3531,3 +3531,11 @@ a {
     transform: translateY(-20px) scale(0.92);
   }
 }
+
+.probe-logs-page { display: grid; gap: 1rem; min-width: 0; }
+.probe-logs-page .page-header,
+.probe-logs-page .actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.probe-logs-page .actions { margin-top: 1rem; justify-content: flex-start; }
+.probe-logs-page .card { min-width: 0; overflow-wrap: anywhere; }
+.probe-logs-page .data-table td { white-space: nowrap; }
+.probe-logs-page .data-table td:nth-child(2) { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }

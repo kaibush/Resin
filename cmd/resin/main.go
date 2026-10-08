@@ -253,6 +253,7 @@ func newTopologyRuntime(
 	}
 	probeMgr := probe.NewProbeManager(probe.ProbeConfig{
 		Metered: metered,
+		LogRepo: engine.StateRepo,
 		StatsFetcher: func(hash node.Hash, url string) ([]byte, time.Duration, int64, int64, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
 			defer cancel()
@@ -277,19 +278,21 @@ func newTopologyRuntime(
 		},
 		Pool:        pool,
 		Concurrency: envCfg.ProbeConcurrency,
-		Fetcher: func(hash node.Hash, url string) ([]byte, time.Duration, error) {
+		ObservedFetcher: func(hash node.Hash, url string) ([]byte, time.Duration, int64, int64, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
 			defer cancel()
 			entry, ok := pool.GetEntry(hash)
 			if !ok {
-				return nil, 0, fmt.Errorf("node not found")
+				return nil, 0, 0, 0, fmt.Errorf("node not found")
 			}
 			outboundPtr := entry.Outbound.Load()
 			if outboundPtr == nil {
-				return nil, 0, outbound.ErrOutboundNotReady
+				return nil, 0, 0, 0, outbound.ErrOutboundNotReady
 			}
-			return netutil.HTTPGetViaOutbound(ctx, *outboundPtr, url, netutil.OutboundHTTPOptions{
+			var ingress, egress int64
+			body, latency, err := netutil.HTTPGetViaOutbound(ctx, *outboundPtr, url, netutil.OutboundHTTPOptions{
 				RequireStatusOK:  false,
+				OnBytes:          func(in, out int64) { ingress = in; egress = out },
 				MaxBodyBytes:     16 << 10,
 				MaxTransferBytes: probe.ProbeTransferLimit,
 				MaxRedirects:     3,
@@ -299,6 +302,7 @@ func newTopologyRuntime(
 					}
 				},
 			})
+			return body, latency, ingress, egress, err
 		},
 		MaxEgressTestInterval: func() time.Duration {
 			return time.Duration(runtimeConfigSnapshot(runtimeCfg).MaxEgressTestInterval)

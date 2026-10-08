@@ -12,6 +12,7 @@ import (
 	"github.com/Resinat/Resin/internal/netutil"
 	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/scanloop"
+	"github.com/Resinat/Resin/internal/state"
 	"github.com/Resinat/Resin/internal/topology"
 	"github.com/puzpuzpuz/xsync/v4"
 )
@@ -23,10 +24,12 @@ type Fetcher func(hash node.Hash, url string) (body []byte, latency time.Duratio
 // ProbeConfig configures the ProbeManager.
 // Field names align 1:1 with RuntimeConfig to prevent mis-wiring.
 type ProbeConfig struct {
-	Metered      *MeteredController
-	StatsFetcher StatsFetcher
-	Pool         *topology.GlobalNodePool
-	Concurrency  int // number of async probe workers
+	LogRepo         *state.StateRepo
+	ObservedFetcher StatsFetcher
+	Metered         *MeteredController
+	StatsFetcher    StatsFetcher
+	Pool            *topology.GlobalNodePool
+	Concurrency     int // number of async probe workers
 	// QueueCapacity is the per-priority async queue capacity.
 	// If <= 0, defaults to max(1024, Concurrency*4).
 	QueueCapacity int
@@ -55,16 +58,18 @@ type ProbeConfig struct {
 // ProbeManager schedules and executes active probes against nodes in the pool.
 // It holds a direct reference to *topology.GlobalNodePool (no interface).
 type ProbeManager struct {
-	metered      *MeteredController
-	statsFetcher StatsFetcher
-	pool         *topology.GlobalNodePool
-	stopCh       chan struct{}
-	stopOnce     sync.Once
-	wg           sync.WaitGroup
-	fetcher      Fetcher
-	workerCount  int
-	taskQueue    *probeTaskQueue
-	taskStates   *xsync.Map[probeTaskKey, *probeTaskState]
+	logs            *logWriter
+	observedFetcher StatsFetcher
+	metered         *MeteredController
+	statsFetcher    StatsFetcher
+	pool            *topology.GlobalNodePool
+	stopCh          chan struct{}
+	stopOnce        sync.Once
+	wg              sync.WaitGroup
+	fetcher         Fetcher
+	workerCount     int
+	taskQueue       *probeTaskQueue
+	taskStates      *xsync.Map[probeTaskKey, *probeTaskState]
 
 	maxEgressTestInterval           func() time.Duration
 	maxLatencyTestInterval          func() time.Duration
@@ -261,7 +266,15 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 		}
 	}
 
+	if cfg.Fetcher == nil && cfg.ObservedFetcher != nil {
+		cfg.Fetcher = func(h node.Hash, u string) ([]byte, time.Duration, error) {
+			b, l, _, _, err := cfg.ObservedFetcher(h, u)
+			return b, l, err
+		}
+	}
 	return &ProbeManager{
+		logs:                            newLogWriter(cfg.LogRepo),
+		observedFetcher:                 cfg.ObservedFetcher,
 		pool:                            cfg.Pool,
 		metered:                         cfg.Metered,
 		statsFetcher:                    cfg.StatsFetcher,
@@ -321,6 +334,7 @@ func (m *ProbeManager) Stop() {
 	})
 	m.metered.stop()
 	m.wg.Wait()
+	m.logs.stop()
 }
 
 // TriggerImmediateEgressProbe enqueues an async egress probe for a node.
@@ -390,7 +404,7 @@ func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, erro
 		m.onProbeEvent("egress")
 	}
 
-	ip, stage, err := m.performEgressProbe(hash)
+	ip, stage, err := m.performEgressProbe(hash, "manual")
 	if err != nil {
 		if stage == egressProbeParseError {
 			return nil, fmt.Errorf("parse egress IP: %w", err)
@@ -454,7 +468,7 @@ func (m *ProbeManager) ProbeLatencySync(hash node.Hash) (*LatencyProbeResult, er
 		m.onProbeEvent("latency")
 	}
 
-	if err := m.performLatencyProbe(hash, testURL); err != nil {
+	if err := m.performLatencyProbe(hash, testURL, "manual"); err != nil {
 		return nil, fmt.Errorf("latency probe failed: %w", err)
 	}
 
@@ -836,8 +850,18 @@ func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testU
 	}
 }
 
-func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressProbeErrorStage, error) {
-	return m.performEgressProbeWithFetcher(hash, m.fetcher)
+func (m *ProbeManager) performEgressProbe(hash node.Hash, reasons ...string) (netip.Addr, egressProbeErrorStage, error) {
+	reason := "automatic"
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
+	row := m.logRow(hash, egressTraceURL, "egress", reason)
+	ip, stage, err := m.performEgressProbeWithFetcher(hash, m.measuredFetcher(&row))
+	if ip.IsValid() {
+		row.EgressIP = ip.String()
+	}
+	m.finishLog(row, err)
+	return ip, stage, err
 }
 func (m *ProbeManager) performEgressProbeWithFetcher(hash node.Hash, fetcher Fetcher) (netip.Addr, egressProbeErrorStage, error) {
 	body, latency, err := fetcher(hash, egressTraceURL)
@@ -861,9 +885,15 @@ func (m *ProbeManager) performEgressProbeWithFetcher(hash node.Hash, fetcher Fet
 	return ip, egressProbeNoError, nil
 }
 
-func (m *ProbeManager) performLatencyProbe(hash node.Hash, testURL string) error {
+func (m *ProbeManager) performLatencyProbe(hash node.Hash, testURL string, reasons ...string) (resultErr error) {
+	reason := "automatic"
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
+	row := m.logRow(hash, testURL, "latency", reason)
+	defer func() { m.finishLog(row, resultErr) }()
 	domain := netutil.ExtractDomain(testURL)
-	_, latency, err := m.fetcher(hash, testURL)
+	_, latency, err := m.measuredFetcher(&row)(hash, testURL)
 	if err != nil {
 		m.pool.RecordResult(hash, false)
 		m.pool.RecordLatency(hash, domain, nil)

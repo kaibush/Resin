@@ -36,6 +36,7 @@ const navItems: NavItem[] = [
   { label: "接入点", path: "/endpoints", icon: Cable },
   { label: "请求头规则", path: "/rules", icon: Regex },
   { label: "请求日志", path: "/request-logs", icon: Logs },
+  { label: "探测日志", path: "/probe-logs", icon: Logs },
   { label: "资源", path: "/resources", icon: Database },
   { label: "系统配置", path: "/system-config", icon: Settings },
 ];
