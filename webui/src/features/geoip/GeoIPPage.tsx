@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { SectionHeader } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
@@ -85,26 +87,21 @@ export function GeoIPPage() {
 
   return (
     <section className="geoip-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("资源")}</h2>
-          <p className="module-description">{t("查询 IP 所在地区，并维护 GeoIP 数据库。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("资源")} description={t("查询 IP 所在地区，并维护 GeoIP 数据库。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-cards-container platform-directory-card" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-        <div className="list-card-header">
-          <div>
-            <h3>GeoIP</h3>
-            <p>{t("可查看数据库状态并进行 IP 查询。")}</p>
-          </div>
+      <Card className="surface platform-cards-container platform-directory-card" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <SectionHeader
+          title="GeoIP"
+          description={t("可查看数据库状态并进行 IP 查询。")}
+          actions={
           <Button variant="secondary" size="sm" onClick={() => void statusQuery.refetch()} disabled={statusQuery.isFetching}>
             <RefreshCw size={16} className={statusQuery.isFetching ? "spin" : undefined} />
             {t("刷新")}
           </Button>
-        </div>
+          }
+        />
 
         <div className="geoip-layout">
           <Card className="geoip-status-card">

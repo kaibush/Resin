@@ -7,6 +7,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { OffsetPagination } from "../../components/ui/OffsetPagination";
 import { Select } from "../../components/ui/Select";
@@ -663,12 +664,7 @@ export function NodesPage() {
 
   return (
     <section className="nodes-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("节点池")}</h2>
-          <p className="module-description">{t("快速定位异常节点并进行探测处理。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("节点池")} description={t("快速定位异常节点并进行探测处理。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 

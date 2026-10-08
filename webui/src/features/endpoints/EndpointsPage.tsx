@@ -14,6 +14,8 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { Section } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { OffsetPagination } from "../../components/ui/OffsetPagination";
 import { Switch } from "../../components/ui/Switch";
@@ -473,21 +475,15 @@ export function EndpointsPage() {
 
   return (
     <section className="platform-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("接入点")}</h2>
-          <p className="module-description">{t("管理监听端口及其可用的接入能力。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("接入点")} description={t("管理监听端口及其可用的接入能力。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-list-card platform-directory-card endpoint-toolbar-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("接入点列表")}</h3>
-            <p>{t("共 {{count}} 个接入点", { count: totalEndpoints })}</p>
-          </div>
+      <Section
+        className="platform-list-card platform-directory-card endpoint-toolbar-card"
+        title={t("接入点列表")}
+        description={t("共 {{count}} 个接入点", { count: totalEndpoints })}
+        actions={
           <div className="endpoint-toolbar-actions">
             <Button variant="secondary" size="sm" onClick={openCreateModal}>
               <Plus size={16} />
@@ -503,8 +499,8 @@ export function EndpointsPage() {
               {t("刷新")}
             </Button>
           </div>
-        </div>
-      </Card>
+        }
+      />
 
       <Card className="platform-cards-container">
         {endpointsQuery.isLoading ? <p className="muted">{t("正在加载接入点...")}</p> : null}

@@ -7,6 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { Section } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { OffsetPagination } from "../../components/ui/OffsetPagination";
 import { Select } from "../../components/ui/Select";
@@ -106,21 +108,15 @@ export function PlatformPage() {
 
   return (
     <section className="platform-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("平台管理")}</h2>
-          <p className="module-description">{t("集中维护平台策略与节点分配规则。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("平台管理")} description={t("集中维护平台策略与节点分配规则。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-list-card platform-directory-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("平台列表")}</h3>
-            <p>{t("共 {{count}} 个平台", { count: totalPlatforms })}</p>
-          </div>
+      <Section
+        className="platform-list-card platform-directory-card"
+        title={t("平台列表")}
+        description={t("共 {{count}} 个平台", { count: totalPlatforms })}
+        actions={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <label className="search-box" htmlFor="platform-search" style={{ maxWidth: 200, margin: 0, gap: 6 }}>
               <Search size={16} />
@@ -153,8 +149,8 @@ export function PlatformPage() {
               {t("刷新")}
             </Button>
           </div>
-        </div>
-      </Card>
+        }
+      />
 
       <Card className="platform-cards-container">
         {platformsQuery.isLoading ? <p className="muted">{t("正在加载平台数据...")}</p> : null}

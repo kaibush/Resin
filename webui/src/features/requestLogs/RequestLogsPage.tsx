@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { DataTable } from "../../components/ui/DataTable";
 import { CursorPagination } from "../../components/ui/CursorPagination";
 import { Input } from "../../components/ui/Input";
@@ -723,19 +724,19 @@ export function RequestLogsPage() {
 
   return (
     <section className="nodes-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("请求日志")}</h2>
-          <p className="module-description">{t("按条件检索请求记录，快速定位问题。")}</p>
-        </div>
-        {!configQuery.isLoading && configQuery.data && (
+      <PageHeader
+        title={t("请求日志")}
+        description={t("按条件检索请求记录，快速定位问题。")}
+        actions={
+        !configQuery.isLoading && configQuery.data ? (
           <Link to="/system-config" style={{ display: "flex", textDecoration: "none" }}>
             <Badge variant={configQuery.data.request_log_enabled ? "success" : "warning"} style={{ cursor: "pointer", fontSize: "13px", padding: "6px 12px" }}>
               {configQuery.data.request_log_enabled ? t("当前实时日志记录已开启") : t("当前实时日志记录未开启")}
             </Badge>
           </Link>
-        )}
-      </header>
+        ) : null
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 

@@ -10,6 +10,8 @@ import { z } from "zod";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { Section } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { DataTable } from "../../components/ui/DataTable";
 import { Input } from "../../components/ui/Input";
 import { OffsetPagination } from "../../components/ui/OffsetPagination";
@@ -673,22 +675,16 @@ export function SubscriptionPage() {
 
   return (
     <section className="platform-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("订阅管理")}</h2>
-          <p className="module-description">{t("保障订阅按计划更新，异常时可一键刷新。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("订阅管理")} description={t("保障订阅按计划更新，异常时可一键刷新。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {probeDialog && <SubscriptionProbeDialog key={`${probeDialog.mode}:${probeDialog.subscription.id}`} subscription={probeDialog.subscription} mode={probeDialog.mode} onClose={() => setProbeDialog(null)} onSaved={() => showToast("success", t("探测策略已保存"))} />}
 
-      <Card className="platform-list-card platform-directory-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("订阅列表")}</h3>
-            <p>{t("共 {{count}} 个订阅", { count: totalSubscriptions })}</p>
-          </div>
+      <Section
+        className="platform-list-card platform-directory-card"
+        title={t("订阅列表")}
+        description={t("共 {{count}} 个订阅", { count: totalSubscriptions })}
+        actions={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <label className="subscription-inline-filter" htmlFor="sub-status-filter" style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <Filter size={16} />
@@ -736,8 +732,8 @@ export function SubscriptionPage() {
               {t("刷新")}
             </Button>
           </div>
-        </div>
-      </Card>
+        }
+      />
 
       <Card className="platform-cards-container subscriptions-table-card">
         {subscriptionsQuery.isLoading ? <p className="muted">{t("正在加载订阅数据...")}</p> : null}

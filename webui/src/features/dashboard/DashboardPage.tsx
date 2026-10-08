@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "../../components/ui/Badge";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Select } from "../../components/ui/Select";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -885,11 +886,10 @@ export function DashboardPage() {
 
   return (
     <section className="dashboard-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("总览看板")}</h2>
-          <p className="module-description">{t("快速发现流量与节点异常，掌握整体运行状态。")}</p>
-        </div>
+      <PageHeader
+        title={t("总览看板")}
+        description={t("快速发现流量与节点异常，掌握整体运行状态。")}
+        actions={
         <div className="dashboard-header-controls">
           <label className="dashboard-control">
             <span>{t("时间范围")}</span>
@@ -902,7 +902,8 @@ export function DashboardPage() {
             </Select>
           </label>
         </div>
-      </header>
+        }
+      />
 
       {globalError ? (
         <div className="callout callout-error">

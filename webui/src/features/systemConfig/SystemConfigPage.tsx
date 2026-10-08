@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { Switch } from "../../components/ui/Switch";
 import { Textarea } from "../../components/ui/Textarea";
@@ -417,12 +418,7 @@ export function SystemConfigPage() {
 
   return (
     <section className="syscfg-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("系统配置")}</h2>
-          <p className="module-description">{t("按需调整系统参数，保存后立即生效。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("系统配置")} description={t("按需调整系统参数，保存后立即生效。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 

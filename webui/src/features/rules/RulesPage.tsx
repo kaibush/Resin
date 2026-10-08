@@ -5,6 +5,8 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { Section } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { DataTable } from "../../components/ui/DataTable";
 import { Input } from "../../components/ui/Input";
 import { Textarea } from "../../components/ui/Textarea";
@@ -278,21 +280,15 @@ export function RulesPage() {
 
   return (
     <section className="rules-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("请求头规则")}</h2>
-          <p className="module-description">{t("为不同地址设置请求头规则，并先测试后应用。")}</p>
-        </div>
-      </header>
+      <PageHeader title={t("请求头规则")} description={t("为不同地址设置请求头规则，并先测试后应用。")} />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-list-card platform-directory-card rules-list-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("规则列表")}</h3>
-            <p>{t("共 {{count}} 条", { count: rules.length })}</p>
-          </div>
+      <Section
+        className="platform-list-card platform-directory-card rules-list-card"
+        title={t("规则列表")}
+        description={t("共 {{count}} 条", { count: rules.length })}
+        actions={
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <label className="search-box" htmlFor="rules-search" style={{ maxWidth: 200, margin: 0, gap: 6 }}>
               <Search size={16} />
@@ -322,8 +318,8 @@ export function RulesPage() {
               {t("刷新")}
             </Button>
           </div>
-        </div>
-      </Card>
+        }
+      />
 
       <Card className="platform-cards-container subscriptions-table-card rules-table-card">
         {rulesQuery.isLoading ? <p className="muted">{t("正在加载规则...")}</p> : null}

@@ -8,6 +8,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { DataTable } from "../../components/ui/DataTable";
 import { Input } from "../../components/ui/Input";
 import { OffsetPagination } from "../../components/ui/OffsetPagination";
@@ -387,11 +388,10 @@ export function PlatformDetailPage() {
 
   return (
     <section className="platform-page platform-detail-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("平台详情")}</h2>
-          <p className="module-description">{t("调整当前平台策略，并执行维护操作。")}</p>
-        </div>
+      <PageHeader
+        title={t("平台详情")}
+        description={t("调整当前平台策略，并执行维护操作。")}
+        actions={
         <div className="platform-detail-toolbar">
           <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
             <ArrowLeft size={16} />
@@ -402,7 +402,8 @@ export function PlatformDetailPage() {
             {t("刷新")}
           </Button>
         </div>
-      </header>
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 

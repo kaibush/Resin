@@ -7,6 +7,8 @@ import { CursorPagination } from "../../components/ui/CursorPagination";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { Card } from "../../components/ui/Card";
+import { Section } from "../../components/layout/Section";
+import { PageHeader } from "../../components/layout/PageHeader";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { useI18n } from "../../i18n";
@@ -69,8 +71,8 @@ function splitSubscription(raw: string): { title: string; detail: string } {
 
 function FilterField({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
-    <div style={{ flex: "1 1 180px", minWidth: 0, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-      <label htmlFor={id} style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{label}</label>
+    <div className="probe-logs-field">
+      <label htmlFor={id}>{label}</label>
       {children}
     </div>
   );
@@ -217,20 +219,20 @@ export function ProbeLogsPage() {
 
   return (
     <section className="nodes-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("探测日志")}</h2>
-          <p className="module-description">{t("查看 Resin 自身的出口和延迟检测，点击记录查看详情。")}</p>
+      <PageHeader
+        title={t("探测日志")}
+        description={t("查看 Resin 自身的出口和延迟检测，点击记录查看详情。")}
+        meta={
           <p className="probe-logs-note">
             {t("仅记录实际发起的检测；缓存命中、预算阻止及被动业务反馈不产生记录。")}
             {" "}
             {t("保留最近 7 天，最多 100,000 条。流量包含目标 TLS，不等同于供应商账单；历史探测无法补录。")}
           </p>
-        </div>
-      </header>
+        }
+      />
 
-      <Card className="filter-card platform-list-card platform-directory-card">
-        <div className="logs-inline-filters">
+      <Section className="filter-card platform-list-card platform-directory-card" title={t("筛选")}>
+        <div className="logs-inline-filters probe-logs-filters">
           <FilterField id="probe-subscription" label={t("订阅名称或 ID")}>
             <Input id="probe-subscription" value={draft.subscription} onChange={(event) => update({ subscription: event.target.value.trim() })} style={controlStyle} />
           </FilterField>
@@ -283,7 +285,7 @@ export function ProbeLogsPage() {
         {(query.data?.dropped_since_start ?? 0) > 0 ? (
           <div className="callout callout-warning probe-logs-alert" role="status">{t("本次启动以来丢失日志条数")}: {query.data?.dropped_since_start}</div>
         ) : null}
-      </Card>
+      </Section>
 
       <Card className="nodes-table-card platform-cards-container subscriptions-table-card">
         {query.isPending || transitioning ? <p className="muted">{t("正在加载日志...")}</p> : null}
