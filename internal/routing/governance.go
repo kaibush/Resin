@@ -37,11 +37,12 @@ type governanceCandidate struct {
 	IP       string `json:"ip"`
 }
 type governanceDecision struct {
-	Mode       string    `json:"mode"`
-	Status     string    `json:"status"`
-	NodeHash   string    `json:"nodeHash"`
-	IP         string    `json:"ip"`
-	ValidUntil time.Time `json:"validUntil"`
+	Mode              string    `json:"mode"`
+	Status            string    `json:"status"`
+	NodeHash          string    `json:"nodeHash"`
+	IP                string    `json:"ip"`
+	ValidUntil        time.Time `json:"validUntil"`
+	FollowPlatformTTL bool      `json:"followPlatformTTL"`
 }
 
 func (r *Router) governanceDecision(plat *platform.Platform, account string, current Lease, loaded bool, checkOnly ...bool) (governanceDecision, error) {
@@ -124,7 +125,15 @@ func (r *Router) decideGovernedLease(plat *platform.Platform, state *PlatformRou
 		return current, xsync.CancelOp, RouteResult{}, ErrNoAvailableNodes
 	}
 	expiry := decision.ValidUntil.UnixNano()
-	if plat.StickyTTLNs > 0 && now.Add(time.Duration(plat.StickyTTLNs)).UnixNano() < expiry {
+	// Admission validity is checked above on every request, independently of
+	// how long the sticky account/IP relationship is retained.
+	if decision.FollowPlatformTTL {
+		ttl := time.Duration(plat.StickyTTLNs)
+		if ttl <= 0 {
+			ttl = 24 * time.Hour // Same safeguard as createLease.
+		}
+		expiry = now.Add(ttl).UnixNano()
+	} else if plat.StickyTTLNs > 0 && now.Add(time.Duration(plat.StickyTTLNs)).UnixNano() < expiry {
 		expiry = now.Add(time.Duration(plat.StickyTTLNs)).UnixNano()
 	}
 	lease := Lease{NodeHash: hash, EgressIP: ip.Unmap(), CreatedAtNs: now.UnixNano(), ExpiryNs: expiry, LastAccessedNs: now.UnixNano()}

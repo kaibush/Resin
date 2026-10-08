@@ -120,3 +120,71 @@ func TestGovernanceRejectsExpiredAdmissionAndChangedIP(t *testing.T) {
 		})
 	}
 }
+
+func TestGovernancePlatformTTLStillRechecksAdmission(t *testing.T) {
+	for _, mode := range []string{"soft", "strict"} {
+		for _, tc := range []struct {
+			name      string
+			follow    bool
+			ttl, want time.Duration
+		}{
+			{"legacy", false, 24 * time.Hour, time.Minute},
+			{"platform", true, 24 * time.Hour, 24 * time.Hour},
+			{"short platform", true, 10 * time.Second, 10 * time.Second},
+			{"legacy short platform", false, 10 * time.Second, 10 * time.Second},
+			{"default platform", true, 0, 24 * time.Hour},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				pool := newRouterTestPool()
+				plat := platform.NewPlatform("p", "Platform", nil, nil)
+				plat.StickyTTLNs = int64(tc.ttl)
+				pool.addPlatform(plat)
+				hash, entry := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
+				pool.addEntry(hash, entry)
+				pool.rebuildPlatformView(plat)
+				var expired, denied atomic.Bool
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					until := time.Now().Add(time.Minute)
+					if expired.Load() {
+						until = time.Now().Add(-time.Second)
+					}
+					status := "allowed"
+					if denied.Load() {
+						status = "waiting"
+					}
+					_ = json.NewEncoder(w).Encode(governanceDecision{Mode: mode, Status: status, NodeHash: hash.Hex(), IP: "192.0.2.1", ValidUntil: until, FollowPlatformTTL: tc.follow})
+				}))
+				defer server.Close()
+				router := newTestRouter(pool, nil)
+				router.governance = &governanceClient{endpoint: server.URL, token: "test", client: server.Client()}
+				before := time.Now()
+				if _, err := router.RouteRequest("Platform", "account", "example.com"); err != nil {
+					t.Fatal(err)
+				}
+				state, ok := router.states.Load(plat.ID)
+				if !ok {
+					t.Fatal("missing routing state")
+				}
+				lease, ok := state.Leases.GetLease("account")
+				if !ok || lease.ExpiryNs < before.Add(tc.want).UnixNano() || lease.ExpiryNs > time.Now().Add(tc.want).UnixNano() {
+					t.Fatalf("lease expiry does not match %s: %+v", tc.want, lease)
+				}
+				// Even an unexpired 24-hour lease requires a fresh, valid admission.
+				expired.Store(true)
+				if _, err := router.RouteRequest("Platform", "account", "example.com"); !errors.Is(err, ErrNoAvailableNodes) {
+					t.Fatalf("expired admission accepted: %v", err)
+				}
+				expired.Store(false)
+				denied.Store(true)
+				if _, err := router.RouteRequest("Platform", "account", "example.com"); !errors.Is(err, ErrNoAvailableNodes) {
+					t.Fatalf("denied admission accepted: %v", err)
+				}
+				if calls.Load() != 3 {
+					t.Fatalf("lease bypassed admission: %d calls", calls.Load())
+				}
+			})
+		}
+	}
+}
