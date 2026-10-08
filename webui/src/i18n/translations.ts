@@ -4,7 +4,17 @@ export const APP_TITLE_ZH = "Resin · 高性能粘性代理池";
 const APP_TITLE_EN = "Resin · Sticky Proxy Pool";
 
 const EXACT_ZH_TO_EN: Record<string, string> = {
+  "探测策略": "Probe Policy",
+  "继承全局": "Inherit Global",
+  "按流量计费": "Metered",
+  "全局": "Global",
+  "计费": "Metered",
+  "继承全局：{{name}}": "Inherit global: {{name}}",
+  "按流量计费：{{name}}": "Metered: {{name}}",
   "探测流量": "Probe Traffic",
+  "检测时间、类型、结果与流量。": "Probe time, type, result, and traffic.",
+  "订阅与节点": "Subscription and node",
+  "流量包含目标 TLS，不等同于供应商账单。": "Bytes include destination TLS and may differ from provider billing.",
   "探测策略已保存": "Probe policy saved",
   "此处显示按流量计费策略的用量账本；继承全局期间的检测请在探测日志查看。": "This shows metered-policy usage. See Probe Logs for probes made while inheriting global settings.",
   "探测日志": "Probe Logs",

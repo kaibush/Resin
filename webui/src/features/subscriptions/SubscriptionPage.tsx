@@ -2,7 +2,7 @@ import { SubscriptionProbeDialog } from "./SubscriptionProbeDialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Activity, BarChart3, AlertTriangle, Eye, Filter, Info, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, BarChart3, AlertTriangle, Eye, Filter, Gauge, Globe2, Info, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
@@ -508,7 +508,29 @@ export function SubscriptionPage() {
     () => [
       col.accessor("name", {
         header: t("名称"),
-        cell: (info) => <p className="subscriptions-name-cell">{info.getValue()}</p>,
+        cell: (info) => {
+          const subscription = info.row.original;
+          const metered = subscription.probe_policy?.mode === "metered";
+          const modeLabel = metered ? t("按流量计费") : t("继承全局");
+          return (
+            <div className="subscriptions-name-cell">
+              <button
+                type="button"
+                className={`subscription-probe-mark ${metered ? "is-metered" : "is-inherit"}`}
+                title={modeLabel}
+                aria-label={t(metered ? "按流量计费：{{name}}" : "继承全局：{{name}}", { name: subscription.name })}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setProbeDialog({ subscription, mode: "policy" });
+                }}
+              >
+                {metered ? <Gauge size={12} /> : <Globe2 size={12} />}
+                <span>{t(metered ? "计费" : "全局")}</span>
+              </button>
+              <span className="subscriptions-name-text" title={info.getValue()}>{info.getValue()}</span>
+            </div>
+          );
+        },
       }),
       col.accessor("url", {
         header: t("订阅源"),
@@ -605,11 +627,11 @@ export function SubscriptionPage() {
               <Button size="sm" variant="ghost" onClick={() => openDrawer(s)} title={t("编辑")}>
                 <Pencil size={14} />
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "policy" })} title={t("探测策略")}>
-                <Activity size={14} />{t("探测策略")}
+              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "policy" })} title={t("探测策略")} aria-label={t("探测策略")}>
+                <Activity size={14} />
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "usage" })} title={t("探测流量")}>
-                <BarChart3 size={14} />{t("探测流量")}
+              <Button size="sm" variant="ghost" onClick={() => setProbeDialog({ subscription: s, mode: "usage" })} title={t("探测流量")} aria-label={t("探测流量")}>
+                <BarChart3 size={14} />
               </Button>
               <Button
                 size="sm"
