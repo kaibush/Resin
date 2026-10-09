@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type ProbePolicy struct {
 	ActiveWindow       Duration `json:"active_window"`
 	MaxEgressAge       Duration `json:"max_egress_age"`
 	MonthlyBudgetBytes int64    `json:"monthly_budget_bytes"`
+	PricePerGB         float64  `json:"price_per_gb"`
 	StrictBudget       bool     `json:"strict_budget"`
 }
 
@@ -30,6 +32,9 @@ func (p ProbePolicy) Validate() error {
 	}
 	if p.MonthlyBudgetBytes < 0 {
 		return fmt.Errorf("probe_policy.monthly_budget_bytes: must be non-negative")
+	}
+	if err := validatePricePerGB(p.PricePerGB); err != nil {
+		return err
 	}
 	if p.Mode == "metered" {
 		if p.EgressInterval < Duration(30*time.Second) || p.ActiveWindow < Duration(30*time.Second) || p.MaxEgressAge < Duration(30*time.Second) {
@@ -64,5 +69,12 @@ func (p *ProbePolicy) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = ProbePolicy(next)
+	return nil
+}
+
+func validatePricePerGB(price float64) error {
+	if math.IsNaN(price) || math.IsInf(price, 0) || price < 0 || price > 1_000_000 {
+		return fmt.Errorf("probe_policy.price_per_gb: must be between 0 and 1000000")
+	}
 	return nil
 }

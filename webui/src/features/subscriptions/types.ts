@@ -4,11 +4,12 @@ export type ProbePolicy = {
   active_window: string;
   max_egress_age: string;
   monthly_budget_bytes: number;
+  price_per_gb: number;
   strict_budget: boolean;
 };
 export const defaultProbePolicy: ProbePolicy = {
   mode: "inherit", egress_interval: "24h", active_window: "24h",
-  max_egress_age: "24h", monthly_budget_bytes: 1_000_000_000, strict_budget: false,
+  max_egress_age: "24h", monthly_budget_bytes: 1_000_000_000, price_per_gb: 0, strict_budget: false,
 };
 export type ProbeUsage = {
   day: string; reason: string; ingress_bytes: number; egress_bytes: number;

@@ -1800,6 +1800,24 @@ a {
   font-size: 12px;
 }
 
+.probe-budget-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(57, 91, 135, 0.28);
+  border-radius: 10px;
+  background: rgba(14, 135, 212, 0.06);
+  color: #1a3f79;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.probe-budget-preview p {
+  margin: 0;
+}
+
 .detail-actions {
   grid-column: 1 / -1;
   display: flex;

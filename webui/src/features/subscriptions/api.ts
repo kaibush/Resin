@@ -21,7 +21,7 @@ type ApiSubscription = Omit<Subscription, "last_checked" | "last_updated" | "las
 function normalizeSubscription(raw: ApiSubscription): Subscription {
   return {
     ...raw,
-    probe_policy: raw.probe_policy?.mode === "metered" ? raw.probe_policy : { ...defaultProbePolicy },
+    probe_policy: raw.probe_policy?.mode === "metered" ? { ...defaultProbePolicy, ...raw.probe_policy, mode: "metered" } : { ...defaultProbePolicy },
     probe_usage: raw.probe_usage ?? [],
     source_type: raw.source_type ?? "remote",
     content: raw.content ?? "",

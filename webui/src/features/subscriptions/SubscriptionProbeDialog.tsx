@@ -12,6 +12,9 @@ import { formatApiErrorMessage } from "../../lib/error-message";
 import { getSubscription, updateSubscription } from "./api";
 import type { ProbePolicy, Subscription } from "./types";
 
+const BYTES_PER_MB = 1_000_000;
+const BYTES_PER_GB = 1_000_000_000;
+
 const policySchema = z.object({
   probe_policy: z.object({
     mode: z.enum(["inherit", "metered"]),
@@ -19,9 +22,26 @@ const policySchema = z.object({
     active_window: z.string().trim().min(1),
     max_egress_age: z.string().trim().min(1),
     monthly_budget_bytes: z.number().int().min(65536),
+    price_per_gb: z.number().finite().min(0).max(1_000_000),
     strict_budget: z.boolean(),
   }),
 });
+
+function formatMB(bytes: number): string {
+  return Number.isFinite(bytes) ? (bytes / BYTES_PER_MB).toFixed(2) : "—";
+}
+
+function formatGB(bytes: number): string {
+  return Number.isFinite(bytes) ? (bytes / BYTES_PER_GB).toFixed(3) : "—";
+}
+
+function formatPrice(value: number): string {
+  return Number.isFinite(value) ? value.toLocaleString("zh-CN", { maximumFractionDigits: 4 }) : "—";
+}
+
+function estimateCost(bytes: number, pricePerGb: number): string {
+  return Number.isFinite(bytes) && Number.isFinite(pricePerGb) ? (bytes / BYTES_PER_GB * pricePerGb).toFixed(2) : "—";
+}
 type PolicyForm = z.infer<typeof policySchema>;
 
 type Props = {
@@ -110,6 +130,8 @@ function PolicyEditor({ subscription, pending, error, onSubmit, onClose }: {
 function ProbePolicyFields({ form }: { form: UseFormReturn<PolicyForm> }) {
   const { t } = useI18n();
   const mode = form.watch("probe_policy.mode");
+  const budgetBytes = form.watch("probe_policy.monthly_budget_bytes");
+  const pricePerGb = form.watch("probe_policy.price_per_gb");
   return <div className="field-group field-span-2">
     <label className="field-label">{t("探测策略")}</label>
     <select className="input" aria-label={t("探测策略")} {...form.register("probe_policy.mode")}>
@@ -123,28 +145,45 @@ function ProbePolicyFields({ form }: { form: UseFormReturn<PolicyForm> }) {
         <label>{t("近期使用窗口")}<Input {...form.register("probe_policy.active_window")} /></label>
         <label>{t("使用前出口信息最大年龄")}<Input {...form.register("probe_policy.max_egress_age")} /></label>
         <label>{t("每月探测预算（字节，1 GB = 1000000000）")}<Input type="number" min={65536} step={1} {...form.register("probe_policy.monthly_budget_bytes", { valueAsNumber: true })} /></label>
+        <label>{t("每 GB 流量费用（元）")}<Input type="number" min={0} max={1_000_000} step="any" {...form.register("probe_policy.price_per_gb", { valueAsNumber: true })} /></label>
       </div>
       <label><input type="checkbox" {...form.register("probe_policy.strict_budget")} /> {t("严格预算：首次验证和手动检测也受预算限制")}</label>
       <p>{t("默认只限制后台检测；严格模式到限后，需验证的新分配会失败。预算按 UTC 月统计。缩短出口有效期会增加费用；检查间隔不能保证上游 IP 不变。")}</p>
+      <p>{t("按供应商实际单价填写。探测流量里的估算费用使用这个值，不会固定按 3 元/GB 计算。")}</p>
+      <BudgetPreview bytes={budgetBytes} pricePerGb={pricePerGb} />
     </>}
-    {form.formState.errors.probe_policy && <p className="field-error">{t("请检查探测策略的间隔和预算。")}</p>}
+    {form.formState.errors.probe_policy && <p className="field-error">{t("请检查探测策略的间隔、预算和单价。")}</p>}
   </div>;
 }
+function BudgetPreview({ bytes, pricePerGb }: { bytes: number; pricePerGb: number }) {
+  const { t } = useI18n();
+  const valid = Number.isFinite(bytes) && Number.isFinite(pricePerGb);
+  return <div className="probe-budget-preview" aria-live="polite">
+    <p>{t("预算换算")}：{valid ? `${bytes.toLocaleString("zh-CN")} ${t("字节")} = ${formatMB(bytes)} MB = ${formatGB(bytes)} GB` : t("无法换算")}</p>
+    <p>{t("按当前单价，预算用满约")} ¥{valid ? estimateCost(bytes, pricePerGb) : "—"}（¥{formatPrice(pricePerGb)}/GB）</p>
+  </div>;
+}
+
 function ProbeUsagePanel({ subscription }: { subscription: Subscription }) {
   const { t } = useI18n();
   const rows = subscription.probe_usage ?? [];
   const bytes = rows.reduce((sum, row) => sum + row.ingress_bytes + row.egress_bytes, 0);
-  const reserved = rows.reduce((sum, row) => sum + row.reserved_bytes, 0);
+  const reserved = rows.reduce((sum, row) => sum + (Number.isFinite(row.reserved_bytes) ? row.reserved_bytes : 0), 0);
   const today = new Date().toISOString().slice(0, 10);
   const todayBytes = rows.filter(row => row.day === today).reduce((sum, row) => sum + row.ingress_bytes + row.egress_bytes, 0);
-  const limit = subscription.probe_policy.monthly_budget_bytes;
-  const blocked = subscription.probe_policy.mode === "metered" && bytes + reserved + 65536 > limit;
+  const metered = subscription.probe_policy.mode === "metered";
+  const limit = metered ? subscription.probe_policy.monthly_budget_bytes : 0;
+  const price = Number.isFinite(subscription.probe_policy.price_per_gb) ? subscription.probe_policy.price_per_gb : 0;
+  const remaining = Math.max(0, limit - bytes - reserved);
+  const blocked = metered && bytes + reserved + 65536 > limit;
   return <div className="field-group field-span-2">
     <strong>{t("探测流量（UTC，估算）")}</strong>
     {subscription.probe_policy.mode !== "metered" && <p>{t("此处显示按流量计费策略的用量账本；继承全局期间的检测请在探测日志查看。")}</p>}
     {subscription.probe_usage_error ? <p className="field-error">{t("探测统计暂不可用")}</p> : <>
-      <p>{t("今日")} {(todayBytes / 1e6).toFixed(2)} MB · {t("本月")} {(bytes / 1e6).toFixed(2)} MB · ¥{(bytes / 1e9 * 3).toFixed(2)}（¥3/GB）</p>
-      <p>{t("预留额度")} {(reserved / 1e6).toFixed(2)} MB {blocked ? t("后台探测预算不足，周期检测已暂停") : ""}</p>
+      {metered && <p>{t("月预算")} {formatMB(limit)} MB（{formatGB(limit)} GB） · {t("已用")} {formatMB(bytes)} MB · {t("剩余")} {formatMB(remaining)} MB</p>}
+      <p>{t("今日")} {formatMB(todayBytes)} MB · {t("本月")} {formatMB(bytes)} MB{metered ? ` · ¥${estimateCost(bytes, price)}（¥${formatPrice(price)}/GB）` : ""}</p>
+      {metered && <p>{t("未结算预留")} {formatMB(reserved)} MB {blocked ? t("后台探测预算不足，周期检测已暂停") : ""}</p>}
+      {metered && price === 0 && <p>{t("单价为 0，估算费用为 0。请在探测策略中填写每 GB 费用。")}</p>}
       <p>{t("统计包含目标 TLS 流量，不等同于供应商账单。异常退出未结算的预留额度在当月继续占用预算。")}</p>
       <div className="data-table-wrap"><table className="data-table"><thead><tr><th>{t("原因")}</th><th>{t("次数")}</th><th>{t("失败")}</th><th>{t("上行 MB")}</th><th>{t("下行 MB")}</th></tr></thead><tbody>
         {([ ["required", "使用前验证"], ["periodic", "周期检测"], ["retry", "故障复测"], ["manual", "手动检测"] ] as const).map(([reason, label]) => {
