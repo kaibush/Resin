@@ -100,6 +100,7 @@ var platformPatchAllowedFields = map[string]bool{
 	"reverse_proxy_empty_account_behavior": true,
 	"reverse_proxy_fixed_account_header":   true,
 	"allocation_policy":                    true,
+	"ip_governance_enabled":                true,
 	"passive_circuit_breaker_disabled":     true,
 	"egress_verification_max_age":          true,
 }

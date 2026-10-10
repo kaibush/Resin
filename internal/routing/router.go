@@ -96,7 +96,7 @@ func (r *Router) RouteRequest(platName, account, target string) (RouteResult, er
 	state := r.ensurePlatformState(plat.ID)
 	var result RouteResult
 	if account == "" {
-		if r.governance != nil {
+		if r.governsPlatform(plat.ID) {
 			decision, e := r.governanceDecision(plat, account, Lease{}, false)
 			if e != nil {
 				return RouteResult{}, e
@@ -193,7 +193,7 @@ func (r *Router) routeSticky(
 		now = time.Now()
 		nowNs = now.UnixNano()
 		decide := r.decideStickyLease
-		if r.governance != nil {
+		if r.governsPlatform(plat.ID) {
 			decide = func(p *platform.Platform, s *PlatformRoutingState, a, t string, n time.Time, _ int64, c Lease, l bool) (Lease, xsync.ComputeOp, RouteResult, error) {
 				return r.decideGovernedLease(p, s, a, t, n, c, l)
 			}
@@ -549,7 +549,7 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 // UpsertLease writes or replaces a lease for (platform_id, account).
 // It updates per-IP lease counters and emits LeaseCreate/LeaseReplace events.
 func (r *Router) UpsertLease(ml model.Lease) error {
-	if r.governance != nil {
+	if r.governsPlatform(ml.PlatformID) {
 		p, ok := r.pool.GetPlatform(ml.PlatformID)
 		if !ok {
 			return ErrPlatformNotFound

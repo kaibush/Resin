@@ -23,6 +23,10 @@ func registerGovernance(mux *http.ServeMux, cp *service.ControlPlaneService) {
 			w.WriteHeader(400)
 			return
 		}
+		if !cp.Router.PlatformGoverned(in.PlatformName) {
+			WriteJSON(w, 409, map[string]string{"status": "unmanaged"})
+			return
+		}
 		result, err := cp.Router.RouteRequest(in.PlatformName, in.Identity, "")
 		if err != nil {
 			WriteJSON(w, 503, map[string]string{"status": "waiting"})

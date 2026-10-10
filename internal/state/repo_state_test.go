@@ -453,6 +453,7 @@ func TestStateRepo_Platforms_CRUD(t *testing.T) {
 		RegexFilters: []string{}, RegionFilters: []string{},
 		ReverseProxyMissAction: "TREAT_AS_EMPTY", AllocationPolicy: "BALANCED",
 		PassiveCircuitBreakerDisabled: true,
+		IPGovernanceEnabled:           true,
 		UpdatedAtNs:                   now,
 	}
 	if err := repo.UpsertPlatform(p); err != nil {
@@ -473,6 +474,9 @@ func TestStateRepo_Platforms_CRUD(t *testing.T) {
 			"RANDOM",
 		)
 	}
+	if !got.IPGovernanceEnabled {
+		t.Fatal("governance setting not persisted")
+	}
 	if !got.PassiveCircuitBreakerDisabled {
 		t.Fatal("expected passive_circuit_breaker_disabled to round-trip true")
 	}
@@ -488,6 +492,7 @@ func TestStateRepo_Platforms_CRUD(t *testing.T) {
 
 	// Idempotent upsert (update same ID).
 	p.Name = "Default-Renamed"
+	p.IPGovernanceEnabled = false
 	p.PassiveCircuitBreakerDisabled = false
 	if err := repo.UpsertPlatform(p); err != nil {
 		t.Fatal(err)
@@ -498,6 +503,9 @@ func TestStateRepo_Platforms_CRUD(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Name != "Default-Renamed" {
 		t.Fatalf("expected renamed platform, got %+v", list)
+	}
+	if list[0].IPGovernanceEnabled {
+		t.Fatal("governance setting not updated")
 	}
 	if list[0].PassiveCircuitBreakerDisabled {
 		t.Fatal("expected passive_circuit_breaker_disabled to update to false")

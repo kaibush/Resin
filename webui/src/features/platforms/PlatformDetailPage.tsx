@@ -469,7 +469,11 @@ export function PlatformDetailPage() {
                   <strong>{t(emptyAccountBehaviorLabel[platform.reverse_proxy_empty_account_behavior])}</strong>
                 </span>
                 <span className="platform-fact">
-                  <span>{t("请求失败熔断")}</span>
+                  <span>{t("IP 治理")}</span>
+ <strong>{platform.ip_governance_enabled ? t("已开启") : t("已关闭")}</strong>
+ </span>
+ <span className="platform-fact">
+ <span>{t("请求失败熔断")}</span>
                   <strong>{platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}</strong>
                 </span>
               </div>
@@ -591,6 +595,14 @@ export function PlatformDetailPage() {
                   </div>
 
                   <div className="field-group">
+ <label className="field-label" htmlFor="detail-edit-ip-governance">{t("IP 治理")}</label>
+ <div className="subscription-switch-item">
+ <label className="subscription-switch-label" htmlFor="detail-edit-ip-governance">{t("启用账号 IP 准入")}</label>
+ <Switch id="detail-edit-ip-governance" {...editForm.register("ip_governance_enabled")} />
+ </div>
+ <p className="muted">{t("开启后，此平台请求需要治理服务准入；关闭时使用普通代理。与订阅计费方式独立，保存后生效。")}</p>
+ </div>
+ <div className="field-group">
                     <label className="field-label" htmlFor="detail-edit-passive-circuit-breaker" style={{ visibility: "hidden" }}>
                       {t("禁用请求失败熔断")}
                     </label>

@@ -142,6 +142,7 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		mp.AllocationPolicy,
 		mp.PassiveCircuitBreakerDisabled,
 	)
+	plat.IPGovernanceEnabled = mp.IPGovernanceEnabled
 	plat.EgressVerificationMaxAgeNs = mp.EgressVerificationMaxAgeNs
 	return plat, nil
 }

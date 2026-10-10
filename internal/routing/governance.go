@@ -32,6 +32,20 @@ func (r *Router) GovernanceConfigured() bool {
 	return r != nil && r.governance != nil && r.governance.token != ""
 }
 
+// governsPlatform is local: ordinary proxy traffic never depends on a callback.
+func (r *Router) governsPlatform(id string) bool {
+	if r == nil {
+		return false
+	}
+	p, ok := r.pool.GetPlatform(id)
+	return ok && p.IPGovernanceEnabled
+}
+
+func (r *Router) PlatformGoverned(name string) bool {
+	p, err := r.resolvePlatform(name)
+	return err == nil && r.governsPlatform(p.ID)
+}
+
 type governanceCandidate struct {
 	NodeHash string `json:"nodeHash"`
 	IP       string `json:"ip"`
@@ -46,6 +60,9 @@ type governanceDecision struct {
 }
 
 func (r *Router) governanceDecision(plat *platform.Platform, account string, current Lease, loaded bool, checkOnly ...bool) (governanceDecision, error) {
+	if !r.GovernanceConfigured() {
+		return governanceDecision{}, fmt.Errorf("%w: governance not configured", ErrNoAvailableNodes)
+	}
 	input := struct {
 		CheckOnly       bool                  `json:"checkOnly"`
 		PlatformID      string                `json:"platformID"`
@@ -164,10 +181,17 @@ func (r *Router) GovernanceReady() bool {
 	return err == nil
 }
 
-func (r *Router) GovernanceEnforced() bool {
-	if r == nil || r.governance == nil {
+func (r *Router) GovernanceEnforced(platformName string) bool {
+	if r == nil {
 		return false
 	}
-	policy, err := r.governanceDecision(&platform.Platform{ID: "__capability", Name: "__capability"}, "", Lease{}, false, true)
+	p, err := r.resolvePlatform(platformName)
+	if err != nil {
+		return true
+	}
+	if !r.governsPlatform(p.ID) {
+		return false
+	}
+	policy, err := r.governanceDecision(p, "", Lease{}, false, true)
 	return err != nil || policy.Mode != "audit"
 }

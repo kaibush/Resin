@@ -38,6 +38,7 @@ export const platformFormSchema = z.object({
   reverse_proxy_fixed_account_header: z.string().optional(),
   allocation_policy: z.enum(allocationPolicies),
   passive_circuit_breaker_disabled: z.boolean(),
+  ip_governance_enabled: z.boolean(),
   egress_verification_max_age:z.string(),
 }).superRefine((value, ctx) => {
   if (
@@ -64,6 +65,7 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   reverse_proxy_fixed_account_header: "Authorization",
   allocation_policy: "BALANCED",
   passive_circuit_breaker_disabled: false,
+  ip_governance_enabled: false,
   egress_verification_max_age:"0s",
 };
 
@@ -81,6 +83,7 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
     reverse_proxy_fixed_account_header: platform.reverse_proxy_fixed_account_header,
     allocation_policy: platform.allocation_policy,
     passive_circuit_breaker_disabled: platform.passive_circuit_breaker_disabled,
+    ip_governance_enabled: platform.ip_governance_enabled,
     egress_verification_max_age:platform.egress_verification_max_age || "0s",
   };
 }
@@ -95,6 +98,7 @@ function toPlatformPayloadBase(values: PlatformFormValues) {
     reverse_proxy_fixed_account_header: parseHeaderLines(values.reverse_proxy_fixed_account_header).join("\n"),
     allocation_policy: values.allocation_policy,
     passive_circuit_breaker_disabled: values.passive_circuit_breaker_disabled,
+    ip_governance_enabled: values.ip_governance_enabled,
     egress_verification_max_age:values.egress_verification_max_age.trim() || "0s",
   };
 }

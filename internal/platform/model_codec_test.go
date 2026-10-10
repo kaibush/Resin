@@ -20,6 +20,7 @@ func TestBuildFromModel_Success(t *testing.T) {
 		ReverseProxyFixedAccountHeader:   "x-account-id",
 		AllocationPolicy:                 "PREFER_LOW_LATENCY",
 		PassiveCircuitBreakerDisabled:    true,
+		IPGovernanceEnabled:              true,
 	}
 
 	plat, err := BuildFromModel(mp)
@@ -52,6 +53,9 @@ func TestBuildFromModel_Success(t *testing.T) {
 	}
 	if plat.AllocationPolicy != AllocationPolicyPreferLowLatency {
 		t.Fatalf("allocation policy mismatch: got %q want %q", plat.AllocationPolicy, AllocationPolicyPreferLowLatency)
+	}
+	if !plat.IPGovernanceEnabled {
+		t.Fatal("governance setting not restored")
 	}
 	if !plat.PassiveCircuitBreakerDisabled {
 		t.Fatal("passive circuit breaker flag mismatch: got false want true")

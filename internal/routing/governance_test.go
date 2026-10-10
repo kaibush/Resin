@@ -17,6 +17,7 @@ func TestGovernanceFiltersFullViewAndRechecksExistingLease(t *testing.T) {
 	pool := newRouterTestPool()
 	plat := platform.NewPlatform("p", "Platform", nil, nil)
 	plat.StickyTTLNs = int64(time.Hour)
+	plat.IPGovernanceEnabled = true
 	pool.addPlatform(plat)
 	a, ea := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
 	b, eb := newRoutableEntry(t, `{"id":"b"}`, "192.0.2.2")
@@ -66,6 +67,7 @@ func TestGovernanceFiltersFullViewAndRechecksExistingLease(t *testing.T) {
 func TestGovernanceAuditAndCallbackFailure(t *testing.T) {
 	pool := newRouterTestPool()
 	plat := platform.NewPlatform("p", "Platform", nil, nil)
+	plat.IPGovernanceEnabled = true
 	pool.addPlatform(plat)
 	hash, entry := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
 	pool.addEntry(hash, entry)
@@ -99,6 +101,7 @@ func TestGovernanceAuditAndCallbackFailure(t *testing.T) {
 func TestGovernanceRejectsExpiredAdmissionAndChangedIP(t *testing.T) {
 	pool := newRouterTestPool()
 	plat := platform.NewPlatform("p", "Platform", nil, nil)
+	plat.IPGovernanceEnabled = true
 	pool.addPlatform(plat)
 	hash, entry := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
 	pool.addEntry(hash, entry)
@@ -138,6 +141,7 @@ func TestGovernancePlatformTTLStillRechecksAdmission(t *testing.T) {
 				pool := newRouterTestPool()
 				plat := platform.NewPlatform("p", "Platform", nil, nil)
 				plat.StickyTTLNs = int64(tc.ttl)
+				plat.IPGovernanceEnabled = true
 				pool.addPlatform(plat)
 				hash, entry := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
 				pool.addEntry(hash, entry)
@@ -186,5 +190,67 @@ func TestGovernancePlatformTTLStillRechecksAdmission(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGovernanceScopeIsolatesOrdinaryPlatforms(t *testing.T) {
+	pool := newRouterTestPool()
+	ordinary := platform.NewPlatform("ordinary", "Ordinary", nil, nil)
+	governed := platform.NewPlatform("governed", "Governed", nil, nil)
+	governed.IPGovernanceEnabled = true
+	hash, entry := newRoutableEntry(t, `{"id":"a"}`, "192.0.2.1")
+	pool.addEntry(hash, entry)
+	for _, p := range []*platform.Platform{ordinary, governed} {
+		pool.addPlatform(p)
+		pool.rebuildPlatformView(p)
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(503) }))
+	defer server.Close()
+	router := newTestRouter(pool, nil)
+	router.governance = &governanceClient{endpoint: server.URL, token: "test", client: server.Client()}
+	for _, account := range []string{"", "sticky", "sticky"} {
+		result, err := router.RouteRequest("Ordinary", account, "example.com")
+		if err != nil || result.NodeHash != hash || result.Governed {
+			t.Fatalf("ordinary route affected: %+v %v", result, err)
+		}
+	}
+	if err := router.UpsertLease(model.Lease{PlatformID: "ordinary", Account: "imported", NodeHash: hash.Hex(), EgressIP: "192.0.2.1", ExpiryNs: time.Now().Add(time.Hour).UnixNano()}); err != nil {
+		t.Fatal(err)
+	}
+	if router.GovernanceEnforced("Ordinary") {
+		t.Fatal("ordinary bypass affected")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("ordinary traffic called governance %d times", calls.Load())
+	}
+	for _, account := range []string{"", "sticky"} {
+		if _, err := router.RouteRequest("Governed", account, "example.com"); !errors.Is(err, ErrNoAvailableNodes) {
+			t.Fatalf("governed failure fell open: %v", err)
+		}
+	}
+	if err := router.UpsertLease(model.Lease{PlatformID: "governed", Account: "imported"}); !errors.Is(err, ErrNoAvailableNodes) {
+		t.Fatalf("governed import fell open: %v", err)
+	}
+	if !router.GovernanceEnforced("Governed") {
+		t.Fatal("governed bypass fell open")
+	}
+	if calls.Load() != 4 {
+		t.Fatalf("expected 4 governed checks, got %d", calls.Load())
+	}
+}
+
+func TestGovernanceEnabledWithoutCallbackFailsClosed(t *testing.T) {
+	pool := newRouterTestPool()
+	p := platform.NewPlatform("p", "Platform", nil, nil)
+	p.IPGovernanceEnabled = true
+	pool.addPlatform(p)
+	r := newTestRouter(pool, nil)
+	r.governance = nil
+	if _, err := r.RouteRequest("Platform", "", "example.com"); !errors.Is(err, ErrNoAvailableNodes) {
+		t.Fatalf("missing callback allowed route: %v", err)
+	}
+	if !r.GovernanceEnforced("Platform") {
+		t.Fatal("missing callback allowed bypass")
 	}
 }

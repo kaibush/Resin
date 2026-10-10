@@ -184,6 +184,7 @@ export function PlatformPage() {
               >
                 <div className="platform-tile-head">
                   <p>{platform.name}</p>
+ <Badge variant={platform.ip_governance_enabled ? "warning" : "success"}>{platform.ip_governance_enabled ? t("IP 治理") : t("普通代理")}</Badge>
                   <Badge variant={platform.id === ZERO_UUID ? "warning" : "success"}>
                     {platform.id === ZERO_UUID ? t("内置平台") : t("自定义平台")}
                   </Badge>
@@ -290,6 +291,14 @@ export function PlatformPage() {
               </div>
 
               <div className="field-group">
+ <label className="field-label" htmlFor="create-ip-governance">{t("IP 治理")}</label>
+ <div className="subscription-switch-item">
+ <label className="subscription-switch-label" htmlFor="create-ip-governance">{t("启用账号 IP 准入")}</label>
+ <Switch id="create-ip-governance" {...createForm.register("ip_governance_enabled")} />
+ </div>
+ <p className="muted">{t("开启后，此平台请求需要治理服务准入；关闭时使用普通代理。与订阅计费方式独立，保存后生效。")}</p>
+ </div>
+ <div className="field-group">
                 <label className="field-label" htmlFor="create-passive-circuit-breaker" style={{ visibility: "hidden" }}>
                   {t("禁用请求失败熔断")}
                 </label>
