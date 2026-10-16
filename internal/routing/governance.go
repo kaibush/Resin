@@ -26,7 +26,12 @@ func newGovernanceClient() *governanceClient {
 	if endpoint == "" {
 		return nil
 	}
-	return &governanceClient{endpoint: endpoint, token: os.Getenv("RESIN_GOVERNANCE_TOKEN"), client: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 16
+	return &governanceClient{endpoint: endpoint, token: os.Getenv("RESIN_GOVERNANCE_TOKEN"), client: &http.Client{
+		Transport: transport, Timeout: 5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 func (r *Router) GovernanceConfigured() bool {
 	return r != nil && r.governance != nil && r.governance.token != ""
@@ -109,7 +114,10 @@ func (r *Router) governanceDecision(plat *platform.Platform, account string, cur
 	}
 	defer response.Body.Close()
 	var result governanceDecision
-	if response.StatusCode != 200 || json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result) != nil {
+	// Read bounded responses to EOF, including error responses, so HTTP/1.1
+	// connections can be reused after both successful and denied admissions.
+	payload, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if readErr != nil || len(payload) > 1<<20 || response.StatusCode != http.StatusOK || json.Unmarshal(payload, &result) != nil {
 		return result, fmt.Errorf("%w: governance denied", ErrNoAvailableNodes)
 	}
 	if input.CheckOnly && (result.Mode == "soft" || result.Mode == "strict") && result.Status == "enforced" {

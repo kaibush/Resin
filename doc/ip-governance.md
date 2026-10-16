@@ -6,7 +6,7 @@
 
 推送 master 会触发 Governance image 工作流，运行路由、代理与 API 测试后发布 `ghcr.io/kaibush/resin:governance` 和 `governance-<完整提交 SHA>`。生产部署使用提交标签或 digest。
 
-源码已包含扩展，无需再次应用 grok2api 中的补丁。也可在仓库根目录运行 `docker build -t resin:governance .`。
+治理实现与测试直接在本仓库维护，镜像构建只使用本仓库源码。也可在仓库根目录运行 `docker build -t resin:governance .`。
 
 未设置 `RESIN_GOVERNANCE_URL` 时保持原生路由行为。必须先部署支持治理回调的 grok2api，再添加以下环境配置；旧应用没有该端点，提前开启会导致路由拒绝。
 
@@ -42,6 +42,8 @@ grok2api 中受管节点的代理地址须指向与 Resin 对接设置相同的�
 - 回调不可用、IP 漂移、供给过期、隔离或严格容量不足时不发起未经批准的业务连接。应用维护绑定等待任务，不重放原业务请求。
 
 `GET /api/v1/governance` 和 `POST /api/v1/governance/route` 是本扩展新增的管理员接口，不是原生 Resin API。后一个接口只维护身份绑定，不发送业务请求；用于后台迁移、等待重试和业务预检查。
+
+治理回调使用 HTTP keep-alive，单主机最多保留 16 条空闲连接。客户端完整读取上限 1 MiB 的响应（包括错误响应），使连接可靠读到 EOF 后复用；超限或非法响应仍拒绝准入。这是 Resin 与 grok2api 的控制面连接，与上文受管业务连接的隔离策略独立。
 
 ## 一致性与范围
 
