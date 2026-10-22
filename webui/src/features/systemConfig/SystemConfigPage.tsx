@@ -25,6 +25,7 @@ type RuntimeConfigForm = {
   max_consecutive_failures: string;
   max_latency_test_interval: string;
   max_authority_latency_test_interval: string;
+  probe_failure_retry_enabled: boolean;
   max_egress_test_interval: string;
   latency_test_url: string;
   latency_authorities_raw: string;
@@ -44,6 +45,7 @@ const EDITABLE_FIELDS: Array<keyof RuntimeConfig> = [
   "max_consecutive_failures",
   "max_latency_test_interval",
   "max_authority_latency_test_interval",
+  "probe_failure_retry_enabled",
   "max_egress_test_interval",
   "latency_test_url",
   "latency_authorities",
@@ -63,6 +65,7 @@ const FIELD_LABELS: Record<keyof RuntimeConfig, string> = {
   max_consecutive_failures: "最大连续失败次数",
   max_latency_test_interval: "节点延迟最大测试间隔",
   max_authority_latency_test_interval: "权威域名最大测试间隔",
+  probe_failure_retry_enabled: "探测失败自动重试与限流保护",
   max_egress_test_interval: "出口 IP 更新检查间隔",
   latency_test_url: "延迟测试目标 URL",
   latency_authorities: "延迟测试权威域名列表",
@@ -100,6 +103,7 @@ function configToForm(config: RuntimeConfig): RuntimeConfigForm {
     max_consecutive_failures: String(config.max_consecutive_failures),
     max_latency_test_interval: config.max_latency_test_interval,
     max_authority_latency_test_interval: config.max_authority_latency_test_interval,
+    probe_failure_retry_enabled: config.probe_failure_retry_enabled,
     max_egress_test_interval: config.max_egress_test_interval,
     latency_test_url: config.latency_test_url,
     latency_authorities_raw: config.latency_authorities.join("\n"),
@@ -174,6 +178,7 @@ function parseForm(form: RuntimeConfigForm): RuntimeConfig {
       "权威域名最大测试间隔",
       form.max_authority_latency_test_interval,
     ),
+    probe_failure_retry_enabled: form.probe_failure_retry_enabled,
     max_egress_test_interval: parseDurationField("出口 IP 更新检查间隔", form.max_egress_test_interval),
     latency_test_url: latencyURL,
     latency_authorities: parseAuthorities(form.latency_authorities_raw),
@@ -458,6 +463,14 @@ export function SystemConfigPage() {
               <section className="syscfg-section">
                 <h4>{t("基础与健康检查")}</h4>
                 <div className="form-grid">
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="sys-probe-retry">{t("探测失败自动重试与限流保护")}</label>
+                    <Switch id="sys-probe-retry" checked={form.probe_failure_retry_enabled}
+                      onChange={(event) => setFormField("probe_failure_retry_enabled", event.target.checked)} />
+                    {renderRestoreButton("probe_failure_retry_enabled")}
+                    <p className="muted">{t("默认开启。出口探测失败后 1–30 分钟退避重试；普通自动探测每订阅每秒最多一次，429 触发订阅冷却。按流量计费订阅保留原有预算与退避策略。")}</p>
+                  </div>
+
                   <div className="field-group">
                     <div style={{ display: "flex", alignItems: "center" }}>
                       <label className="field-label" htmlFor="sys-max-fail" style={{ margin: 0 }}>

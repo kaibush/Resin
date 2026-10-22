@@ -427,3 +427,16 @@ func TestPatchRuntimeConfig_LatencyTestURLAutoAddsAuthority(t *testing.T) {
 		t.Fatalf("expected gstatic.com to be auto-added, got %v", updated.LatencyAuthorities)
 	}
 }
+
+func TestProbeRetryConfigPatch(t *testing.T) {
+	cfg := config.NewDefaultRuntimeConfig()
+	if err := parseRuntimeConfigPatch([]byte(`{"probe_failure_retry_enabled":false}`), cfg); err != nil || cfg.ProbeFailureRetryEnabled {
+		t.Fatalf("toggle off: %v", err)
+	}
+	if err := parseRuntimeConfigPatch([]byte(`{"probe_failure_retry_enabled":true}`), cfg); err != nil || !cfg.ProbeFailureRetryEnabled {
+		t.Fatalf("toggle on: %v", err)
+	}
+	if err := parseRuntimeConfigPatch([]byte(`{"probe_failure_retry_enabled":null}`), cfg); err == nil {
+		t.Fatal("null must be rejected")
+	}
+}

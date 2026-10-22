@@ -142,6 +142,8 @@ func (m *ProbeManager) finishLog(row state.ProbeLog, err error) {
 			row.Error = "probe response too large"
 		case strings.Contains(err.Error(), "redirect limit"):
 			row.Error = "probe redirect limit exceeded"
+		case isRateLimited(err):
+			row.Error = "upstream rate limited (429)"
 		case strings.Contains(err.Error(), "unexpected status"):
 			row.Error = "unexpected HTTP status"
 		case strings.Contains(strings.ToLower(err.Error()), "parse") || strings.Contains(err.Error(), "trace"):

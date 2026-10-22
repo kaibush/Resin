@@ -73,6 +73,7 @@ type ControlPlaneService struct {
 
 // runtimeConfigAllowedFields is the set of JSON field names that can be patched.
 var runtimeConfigAllowedFields = map[string]bool{
+	"probe_failure_retry_enabled":              true,
 	"request_log_enabled":                      true,
 	"reverse_proxy_log_detail_enabled":         true,
 	"reverse_proxy_log_req_headers_max_bytes":  true,

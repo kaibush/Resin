@@ -24,12 +24,13 @@ type Fetcher func(hash node.Hash, url string) (body []byte, latency time.Duratio
 // ProbeConfig configures the ProbeManager.
 // Field names align 1:1 with RuntimeConfig to prevent mis-wiring.
 type ProbeConfig struct {
-	LogRepo         *state.StateRepo
-	ObservedFetcher StatsFetcher
-	Metered         *MeteredController
-	StatsFetcher    StatsFetcher
-	Pool            *topology.GlobalNodePool
-	Concurrency     int // number of async probe workers
+	ProbeFailureRetryEnabled func() bool
+	LogRepo                  *state.StateRepo
+	ObservedFetcher          StatsFetcher
+	Metered                  *MeteredController
+	StatsFetcher             StatsFetcher
+	Pool                     *topology.GlobalNodePool
+	Concurrency              int // number of async probe workers
 	// QueueCapacity is the per-priority async queue capacity.
 	// If <= 0, defaults to max(1024, Concurrency*4).
 	QueueCapacity int
@@ -58,6 +59,11 @@ type ProbeConfig struct {
 // ProbeManager schedules and executes active probes against nodes in the pool.
 // It holds a direct reference to *topology.GlobalNodePool (no interface).
 type ProbeManager struct {
+	retryEnabled    func() bool
+	retryMu         sync.Mutex
+	retrySweep      time.Time
+	retries         map[node.Hash]retryState
+	probeGroups     map[string]probeGroup
 	logs            *logWriter
 	observedFetcher StatsFetcher
 	metered         *MeteredController
@@ -273,6 +279,9 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 		}
 	}
 	return &ProbeManager{
+		retryEnabled:                    cfg.ProbeFailureRetryEnabled,
+		retries:                         make(map[node.Hash]retryState),
+		probeGroups:                     make(map[string]probeGroup),
 		logs:                            newLogWriter(cfg.LogRepo),
 		observedFetcher:                 cfg.ObservedFetcher,
 		pool:                            cfg.Pool,
@@ -302,7 +311,14 @@ func (m *ProbeManager) Start() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		scanloop.Run(m.stopCh, scanloop.DefaultMinInterval, scanloop.DefaultJitterRange, m.scanEgress)
+		var lastScan time.Time
+		scanloop.Run(m.stopCh, time.Second, 250*time.Millisecond, func() {
+			if !m.failureRetryEnabled() && time.Since(lastScan) < scanloop.DefaultMinInterval {
+				return
+			}
+			lastScan = time.Now()
+			m.scanEgress()
+		})
 	}()
 
 	m.wg.Add(1)
@@ -488,6 +504,7 @@ func (m *ProbeManager) ProbeLatencySync(hash node.Hash) (*LatencyProbeResult, er
 // scanEgress iterates all pool nodes and probes those due for egress check.
 func (m *ProbeManager) scanEgress() {
 	now := time.Now()
+	m.pruneRetries(now)
 	interval := 24 * time.Hour // default MaxEgressTestInterval
 	if m.maxEgressTestInterval != nil {
 		interval = m.maxEgressTestInterval()
@@ -521,6 +538,9 @@ func (m *ProbeManager) scanEgress() {
 		lastCheck := entry.LastEgressUpdateAttempt.Load()
 		if lastCheck > 0 {
 			nextDue := time.Unix(0, lastCheck).Add(interval).Add(-lookahead)
+			if m.failureRetryEnabled() && lastCheck > entry.LastEgressUpdate.Load() {
+				nextDue = m.egressRetryDue(h, lastCheck)
+			}
 			if now.Before(nextDue) {
 				return true // not yet due
 			}
@@ -608,6 +628,17 @@ func (m *ProbeManager) executeTask(task probeTask) {
 		if task.key.kind == probeTaskKindEgress && m.metered.Due(task.key.hash) {
 			_, _, _ = m.metered.run(m, task.key.hash, "periodic")
 		}
+		return
+	}
+	// A scan while this node was in flight can mark the task dirty. Recheck
+	// its deadline so that queued work cannot bypass failure backoff.
+	if m.failureRetryEnabled() && task.key.kind == probeTaskKindEgress {
+		attempt := entry.LastEgressUpdateAttempt.Load()
+		if attempt > entry.LastEgressUpdate.Load() && time.Now().Before(m.egressRetryDue(task.key.hash, attempt)) {
+			return
+		}
+	}
+	if !m.admitAutomaticProbe(entry, time.Now()) {
 		return
 	}
 	switch task.key.kind {
@@ -866,7 +897,10 @@ func (m *ProbeManager) performEgressProbe(hash node.Hash, reasons ...string) (ne
 func (m *ProbeManager) performEgressProbeWithFetcher(hash node.Hash, fetcher Fetcher) (netip.Addr, egressProbeErrorStage, error) {
 	body, latency, err := fetcher(hash, egressTraceURL)
 	if err != nil {
-		m.pool.RecordResult(hash, false)
+		if !m.noteRateLimit(hash, err) {
+			m.pool.RecordResult(hash, false)
+		}
+		m.recordEgressRetry(hash, false)
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
 		return netip.Addr{}, egressProbeFetchError, err
 	}
@@ -878,9 +912,11 @@ func (m *ProbeManager) performEgressProbeWithFetcher(hash node.Hash, fetcher Fet
 
 	ip, loc, err := ParseCloudflareTrace(body)
 	if err != nil {
+		m.recordEgressRetry(hash, false)
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
 		return netip.Addr{}, egressProbeParseError, err
 	}
+	m.recordEgressRetry(hash, true)
 	m.pool.UpdateNodeEgressIP(hash, &ip, loc)
 	return ip, egressProbeNoError, nil
 }
@@ -895,7 +931,9 @@ func (m *ProbeManager) performLatencyProbe(hash node.Hash, testURL string, reaso
 	domain := netutil.ExtractDomain(testURL)
 	_, latency, err := m.measuredFetcher(&row)(hash, testURL)
 	if err != nil {
-		m.pool.RecordResult(hash, false)
+		if !m.noteRateLimit(hash, err) {
+			m.pool.RecordResult(hash, false)
+		}
 		m.pool.RecordLatency(hash, domain, nil)
 		return err
 	}

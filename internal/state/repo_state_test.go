@@ -924,3 +924,23 @@ func TestStateRepo_ConcurrentWrites(t *testing.T) {
 func itoa(i int) string {
 	return strconv.Itoa(i)
 }
+
+func TestStateRepo_ProbeRetryUpgradeDefault(t *testing.T) {
+	repo := newTestStateRepo(t)
+	_, err := repo.db.Exec(`INSERT INTO system_config (id,config_json,version,updated_at_ns) VALUES (1,'{"max_consecutive_failures":7}',1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := repo.GetSystemConfig()
+	if err != nil || !cfg.ProbeFailureRetryEnabled || cfg.MaxConsecutiveFailures != 7 {
+		t.Fatalf("upgrade defaults: %+v, %v", cfg, err)
+	}
+	cfg.ProbeFailureRetryEnabled = false
+	if err := repo.SaveSystemConfig(cfg, 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = repo.GetSystemConfig()
+	if err != nil || cfg.ProbeFailureRetryEnabled {
+		t.Fatal("explicit false must survive restart")
+	}
+}

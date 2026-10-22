@@ -13,6 +13,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   max_consecutive_failures: 0,
   max_latency_test_interval: "",
   max_authority_latency_test_interval: "",
+  probe_failure_retry_enabled: true,
   max_egress_test_interval: "",
   latency_test_url: "",
   latency_authorities: [],
@@ -67,6 +68,7 @@ function normalizeRuntimeConfig(raw: Partial<RuntimeConfig> | null | undefined):
       raw.max_authority_latency_test_interval,
       DEFAULT_CONFIG.max_authority_latency_test_interval,
     ),
+    probe_failure_retry_enabled: raw.probe_failure_retry_enabled ?? true,
     max_egress_test_interval: asString(raw.max_egress_test_interval, DEFAULT_CONFIG.max_egress_test_interval),
     latency_test_url: asString(raw.latency_test_url, DEFAULT_CONFIG.latency_test_url),
     latency_authorities: Array.isArray(raw.latency_authorities)

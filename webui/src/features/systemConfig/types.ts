@@ -8,6 +8,7 @@ export type RuntimeConfig = {
   max_consecutive_failures: number;
   max_latency_test_interval: string;
   max_authority_latency_test_interval: string;
+  probe_failure_retry_enabled: boolean;
   max_egress_test_interval: string;
   latency_test_url: string;
   latency_authorities: string[];

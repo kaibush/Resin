@@ -20,8 +20,9 @@ type RuntimeConfig struct {
 	MaxEgressTestInterval           Duration `json:"max_egress_test_interval"`
 
 	// Probe
-	LatencyTestURL     string   `json:"latency_test_url"`
-	LatencyAuthorities []string `json:"latency_authorities"`
+	ProbeFailureRetryEnabled bool     `json:"probe_failure_retry_enabled"`
+	LatencyTestURL           string   `json:"latency_test_url"`
+	LatencyAuthorities       []string `json:"latency_authorities"`
 
 	// P2C
 	P2CLatencyWindow   Duration `json:"p2c_latency_window"`
@@ -48,8 +49,9 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		MaxAuthorityLatencyTestInterval: Duration(3 * time.Hour),
 		MaxEgressTestInterval:           Duration(24 * time.Hour),
 
-		LatencyTestURL:     "https://www.gstatic.com/generate_204",
-		LatencyAuthorities: []string{"gstatic.com", "google.com", "cloudflare.com", "github.com"},
+		ProbeFailureRetryEnabled: true,
+		LatencyTestURL:           "https://www.gstatic.com/generate_204",
+		LatencyAuthorities:       []string{"gstatic.com", "google.com", "cloudflare.com", "github.com"},
 
 		P2CLatencyWindow:   Duration(10 * time.Minute),
 		LatencyDecayWindow: Duration(10 * time.Minute),

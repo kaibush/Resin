@@ -304,6 +304,7 @@ func newTopologyRuntime(
 			})
 			return body, latency, ingress, egress, err
 		},
+		ProbeFailureRetryEnabled: func() bool { return runtimeConfigSnapshot(runtimeCfg).ProbeFailureRetryEnabled },
 		MaxEgressTestInterval: func() time.Duration {
 			return time.Duration(runtimeConfigSnapshot(runtimeCfg).MaxEgressTestInterval)
 		},
