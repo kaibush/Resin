@@ -1,7 +1,10 @@
 package service
 
 import (
+	"cmp"
 	"net/netip"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -521,5 +524,151 @@ func TestProbeEgress_ReturnsRegion(t *testing.T) {
 	}
 	if got.Region != "jp" {
 		t.Fatalf("region: got %q, want %q", got.Region, "jp")
+	}
+}
+
+func TestListNodesPageMatchesFullSummarySortAndAggregates(t *testing.T) {
+	subMgr := topology.NewSubscriptionManager()
+	pool := newNodeListTestPool(subMgr)
+	sub := subscription.NewSubscription("sub-page", "pool", "https://example.com/page", true, false)
+	subMgr.Register(sub)
+
+	type nodeFixture struct {
+		raw         string
+		tag         string
+		createdAt   time.Time
+		egressIP    string
+		region      string
+		failures    int32
+		hasOutbound bool
+		circuitOpen bool
+	}
+	fixtures := []nodeFixture{
+		{
+			raw:         `{"type":"ss","server":"1.1.1.1","port":443}`,
+			tag:         "zulu",
+			createdAt:   time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC),
+			egressIP:    "203.0.113.10",
+			region:      "us",
+			failures:    3,
+			hasOutbound: true,
+		},
+		{
+			raw:         `{"type":"ss","server":"2.2.2.2","port":443}`,
+			tag:         "alpha",
+			createdAt:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			egressIP:    "203.0.113.10",
+			region:      "jp",
+			failures:    1,
+			hasOutbound: false,
+		},
+		{
+			raw:         `{"type":"ss","server":"3.3.3.3","port":443}`,
+			tag:         "middle",
+			createdAt:   time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+			egressIP:    "203.0.113.11",
+			region:      "ca",
+			failures:    2,
+			hasOutbound: true,
+			circuitOpen: true,
+		},
+		{
+			raw:       `{"type":"ss","server":"4.4.4.4","port":443}`,
+			tag:       "middle",
+			createdAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			region:    "zz",
+			failures:  1,
+		},
+	}
+
+	for _, fixture := range fixtures {
+		raw := []byte(fixture.raw)
+		hash := node.HashFromRawOptions(raw)
+		entry := node.NewNodeEntry(hash, raw, fixture.createdAt, 0)
+		entry.AddSubscriptionID(sub.ID)
+		entry.FailureCount.Store(fixture.failures)
+		if fixture.egressIP != "" {
+			entry.SetEgressIP(netip.MustParseAddr(fixture.egressIP))
+		}
+		entry.SetEgressRegion(fixture.region)
+		if fixture.hasOutbound {
+			outbound := testutil.NewNoopOutbound()
+			entry.Outbound.Store(&outbound)
+		}
+		if fixture.circuitOpen {
+			entry.CircuitOpenSince.Store(time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC).UnixNano())
+		}
+		pool.LoadNodeFromBootstrap(entry)
+		sub.ManagedNodes().StoreNode(hash, subscription.ManagedNode{Tags: []string{fixture.tag}})
+	}
+
+	cp := &ControlPlaneService{Pool: pool, SubMgr: subMgr}
+	allNodes, err := cp.ListNodes(NodeFilters{})
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+
+	for _, sortBy := range []string{"tag", "created_at", "failure_count", "region"} {
+		for _, sortOrder := range []string{"asc", "desc"} {
+			t.Run(sortBy+"/"+sortOrder, func(t *testing.T) {
+				expected := append([]NodeSummary(nil), allNodes...)
+				slices.SortStableFunc(expected, func(a, b NodeSummary) int {
+					order := 0
+					switch sortBy {
+					case "created_at":
+						order = strings.Compare(a.CreatedAt, b.CreatedAt)
+					case "failure_count":
+						order = cmp.Compare(a.FailureCount, b.FailureCount)
+					case "region":
+						order = strings.Compare(a.Region, b.Region)
+					default:
+						order = strings.Compare(a.DisplayTag, b.DisplayTag)
+					}
+					if order == 0 {
+						order = strings.Compare(a.NodeHash, b.NodeHash)
+					}
+					if sortOrder == "desc" {
+						return -order
+					}
+					return order
+				})
+
+				page, err := cp.ListNodesPage(NodeFilters{}, NodeListOptions{
+					SortBy:    sortBy,
+					SortOrder: sortOrder,
+					Limit:     2,
+					Offset:    1,
+				})
+				if err != nil {
+					t.Fatalf("ListNodesPage: %v", err)
+				}
+				if page.Total != len(expected) || page.Limit != 2 || page.Offset != 1 {
+					t.Fatalf("page metadata = total:%d limit:%d offset:%d", page.Total, page.Limit, page.Offset)
+				}
+				if len(page.Items) != 2 {
+					t.Fatalf("page item count = %d, want 2", len(page.Items))
+				}
+				for index, item := range page.Items {
+					if item.NodeHash != expected[index+1].NodeHash {
+						t.Fatalf("page item %d hash = %q, want %q", index, item.NodeHash, expected[index+1].NodeHash)
+					}
+				}
+
+				uniqueIPs := make(map[string]struct{})
+				healthyIPs := make(map[string]struct{})
+				for _, item := range allNodes {
+					if item.EgressIP == "" {
+						continue
+					}
+					uniqueIPs[item.EgressIP] = struct{}{}
+					if item.IsHealthyAndEnabled() {
+						healthyIPs[item.EgressIP] = struct{}{}
+					}
+				}
+				if page.UniqueEgressIPs != len(uniqueIPs) || page.UniqueHealthyEgressIPs != len(healthyIPs) {
+					t.Fatalf("unique IP counts = %d/%d, want %d/%d", page.UniqueEgressIPs, page.UniqueHealthyEgressIPs, len(uniqueIPs), len(healthyIPs))
+				}
+			})
+		}
 	}
 }

@@ -1,13 +1,17 @@
 package service
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
-	"github.com/Resinat/Resin/internal/probepolicy"
+	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/probe"
+	"github.com/Resinat/Resin/internal/probepolicy"
 	"github.com/Resinat/Resin/internal/subscription"
 )
 
@@ -28,8 +32,144 @@ type NodeFilters struct {
 	TagKeyword     *string
 }
 
+type NodeListOptions struct {
+	SortBy    string
+	SortOrder string
+	Limit     int
+	Offset    int
+}
+
+type NodeListPage struct {
+	Items                  []NodeSummary `json:"items"`
+	Total                  int           `json:"total"`
+	Limit                  int           `json:"limit"`
+	Offset                 int           `json:"offset"`
+	UniqueEgressIPs        int           `json:"unique_egress_ips"`
+	UniqueHealthyEgressIPs int           `json:"unique_healthy_egress_ips"`
+}
+
+type nodeListCandidate struct {
+	hash         node.Hash
+	entry        *node.NodeEntry
+	sortKey      string
+	failureCount int
+}
+
 // ListNodes returns nodes from the pool with optional filters.
 func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, error) {
+	result := make([]NodeSummary, 0)
+	err := s.forEachMatchingNodeEntry(filters, func(h node.Hash, entry *node.NodeEntry, _ node.SubLookupFunc) {
+		result = append(result, s.nodeEntryToSummary(h, entry))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *ControlPlaneService) ListNodesPage(filters NodeFilters, options NodeListOptions) (NodeListPage, error) {
+	sortBy := options.SortBy
+	switch sortBy {
+	case "created_at", "failure_count", "region", "tag":
+	default:
+		sortBy = "tag"
+	}
+
+	candidates := make([]nodeListCandidate, 0)
+	uniqueIPs := make(map[string]bool)
+	err := s.forEachMatchingNodeEntry(filters, func(h node.Hash, entry *node.NodeEntry, subLookup node.SubLookupFunc) {
+		candidate := nodeListCandidate{hash: h, entry: entry}
+		switch sortBy {
+		case "created_at":
+			candidate.sortKey = entry.CreatedAt.UTC().Format(time.RFC3339Nano)
+		case "failure_count":
+			candidate.failureCount = int(entry.FailureCount.Load())
+		case "region":
+			if entry.GetEgressIP().IsValid() {
+				candidate.sortKey = entry.GetRegion(s.geoIPLookup())
+			}
+		default:
+			candidate.sortKey = s.nodeListTagSortKey(h, entry)
+		}
+		candidates = append(candidates, candidate)
+
+		ip := entry.GetEgressIP()
+		if !ip.IsValid() {
+			return
+		}
+		key := ip.String()
+		enabled := true
+		if s != nil && s.Pool != nil {
+			enabled = !entry.IsDisabledBySubscriptions(subLookup)
+		}
+		if enabled && entry.HasOutbound() && entry.CircuitOpenSince.Load() <= 0 {
+			uniqueIPs[key] = true
+		} else if _, ok := uniqueIPs[key]; !ok {
+			uniqueIPs[key] = false
+		}
+	})
+	if err != nil {
+		return NodeListPage{}, err
+	}
+
+	descending := options.SortOrder == "desc"
+	slices.SortFunc(candidates, func(a, b nodeListCandidate) int {
+		order := 0
+		if sortBy == "failure_count" {
+			order = cmp.Compare(a.failureCount, b.failureCount)
+		} else {
+			order = strings.Compare(a.sortKey, b.sortKey)
+		}
+		if order == 0 {
+			order = bytes.Compare(a.hash[:], b.hash[:])
+		}
+		if descending {
+			return -order
+		}
+		return order
+	})
+
+	total := len(candidates)
+	start := options.Offset
+	if start > total {
+		start = total
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := total
+	if options.Limit < end-start {
+		end = start + options.Limit
+	}
+	if end < start {
+		end = start
+	}
+
+	items := make([]NodeSummary, 0, end-start)
+	for _, candidate := range candidates[start:end] {
+		items = append(items, s.nodeEntryToSummary(candidate.hash, candidate.entry))
+	}
+
+	uniqueHealthyIPs := 0
+	for _, healthy := range uniqueIPs {
+		if healthy {
+			uniqueHealthyIPs++
+		}
+	}
+	return NodeListPage{
+		Items:                  items,
+		Total:                  total,
+		Limit:                  options.Limit,
+		Offset:                 options.Offset,
+		UniqueEgressIPs:        len(uniqueIPs),
+		UniqueHealthyEgressIPs: uniqueHealthyIPs,
+	}, nil
+}
+
+func (s *ControlPlaneService) forEachMatchingNodeEntry(
+	filters NodeFilters,
+	visit func(node.Hash, *node.NodeEntry, node.SubLookupFunc),
+) error {
 	var subLookup node.SubLookupFunc
 	if s != nil && s.Pool != nil {
 		subLookup = s.Pool.MakeSubLookup()
@@ -40,7 +180,7 @@ func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, err
 	if filters.PlatformID != nil {
 		plat, ok := s.Pool.GetPlatform(*filters.PlatformID)
 		if !ok {
-			return nil, notFound("platform not found")
+			return notFound("platform not found")
 		}
 		platformView = make(map[node.Hash]struct{}, plat.View().Size())
 		plat.View().Range(func(h node.Hash) bool {
@@ -53,7 +193,7 @@ func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, err
 	if filters.SubscriptionID != nil {
 		sub := s.SubMgr.Lookup(*filters.SubscriptionID)
 		if sub == nil {
-			return nil, notFound("subscription not found")
+			return notFound("subscription not found")
 		}
 		subNodes = make(map[node.Hash]struct{})
 		sub.ManagedNodes().RangeNodes(func(h node.Hash, managed subscription.ManagedNode) bool {
@@ -65,12 +205,11 @@ func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, err
 		})
 	}
 
-	var result []NodeSummary
 	appendIfMatched := func(h node.Hash, entry *node.NodeEntry) {
 		if !s.nodeEntryMatchesFilters(entry, filters, subLookup) {
 			return
 		}
-		result = append(result, s.nodeEntryToSummary(h, entry))
+		visit(h, entry, subLookup)
 	}
 
 	appendIfMatchedHash := func(h node.Hash) {
@@ -114,10 +253,49 @@ func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, err
 		})
 	}
 
-	if result == nil {
-		result = []NodeSummary{}
+	return nil
+}
+
+func (s *ControlPlaneService) geoIPLookup() func(netip.Addr) string {
+	if s == nil || s.GeoIP == nil {
+		return nil
 	}
-	return result, nil
+	return s.GeoIP.Lookup
+}
+
+func (s *ControlPlaneService) nodeListTagSortKey(h node.Hash, entry *node.NodeEntry) string {
+	if s != nil && s.Pool != nil {
+		if displayTag := s.Pool.ResolveNodeDisplayTag(h); displayTag != "" {
+			return displayTag
+		}
+	}
+
+	if s == nil || s.SubMgr == nil {
+		return ""
+	}
+	bestFound := false
+	var bestCreatedAtNs int64
+	bestTag := ""
+	for _, subID := range entry.SubscriptionIDs() {
+		sub := s.SubMgr.Lookup(subID)
+		if sub == nil {
+			continue
+		}
+		managed, ok := sub.ManagedNodes().LoadNode(h)
+		if !ok {
+			continue
+		}
+		for _, tag := range managed.Tags {
+			displayTag := sub.Name() + "/" + tag
+			if !bestFound || sub.CreatedAtNs < bestCreatedAtNs ||
+				(sub.CreatedAtNs == bestCreatedAtNs && (bestTag == "" || displayTag < bestTag)) {
+				bestFound = true
+				bestCreatedAtNs = sub.CreatedAtNs
+				bestTag = displayTag
+			}
+		}
+	}
+	return bestTag
 }
 
 func (s *ControlPlaneService) nodeEntryMatchesFilters(
