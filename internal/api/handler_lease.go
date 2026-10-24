@@ -191,3 +191,16 @@ func HandleIPLoad(cp *service.ControlPlaneService) http.HandlerFunc {
 		WritePage(w, http.StatusOK, entries, pg)
 	}
 }
+
+// HandleIPLeaseCount returns the current count for one egress IP without
+// listing or scanning individual account leases.
+func HandleIPLeaseCount(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		count, err := cp.GetIPLeaseCount(r.URL.Query().Get("egress_ip"))
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]int64{"count": count})
+	}
+}

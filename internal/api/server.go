@@ -72,7 +72,6 @@ func NewServerWithAddress(
 	authed.Handle("GET /api/v1/system/config/env", HandleSystemEnvConfig(envCfg))
 
 	if cp != nil {
-		registerGovernance(authed, cp)
 		// System config mutations.
 		authed.Handle("PATCH /api/v1/system/config", HandlePatchSystemConfig(cp))
 
@@ -96,6 +95,7 @@ func NewServerWithAddress(
 		authed.Handle("DELETE /api/v1/endpoints/{id}", HandleDeleteEndpoint(cp))
 
 		// Leases (under platforms).
+		authed.Handle("GET /api/v1/leases/ip-count", HandleIPLeaseCount(cp))
 		authed.Handle("GET /api/v1/platforms/{id}/leases", HandleListLeases(cp))
 		authed.Handle("DELETE /api/v1/platforms/{id}/leases", HandleDeleteAllLeases(cp))
 		authed.Handle("GET /api/v1/platforms/{id}/leases/{account}", HandleGetLease(cp))

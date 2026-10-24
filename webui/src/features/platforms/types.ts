@@ -15,6 +15,7 @@ export type Platform = {
   allocation_policy: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled: boolean;
   ip_governance_enabled: boolean;
+  ip_governance_max_accounts_per_ip: number;
   egress_verification_max_age: string;
   updated_at: string;
 };
@@ -37,6 +38,7 @@ export type PlatformCreateInput = {
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
   ip_governance_enabled?: boolean;
+  ip_governance_max_accounts_per_ip?: number;
   egress_verification_max_age?: string;
 };
 
@@ -51,6 +53,7 @@ export type PlatformUpdateInput = {
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
   ip_governance_enabled?: boolean;
+  ip_governance_max_accounts_per_ip?: number;
   egress_verification_max_age?: string;
 };
 

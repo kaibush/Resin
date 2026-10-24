@@ -42,11 +42,13 @@ type Platform struct {
 	AllocationPolicy                 AllocationPolicy
 	PassiveCircuitBreakerDisabled    bool
 	IPGovernanceEnabled              bool
+	IPGovernanceMaxAccountsPerIP     int
 
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
-	view   *RoutableView
-	viewMu sync.Mutex
+	view          *RoutableView
+	viewMu        sync.Mutex
+	viewEgressIPs map[node.Hash]netip.Addr
 }
 
 // NewPlatform creates a Platform with an empty routable view.
@@ -82,13 +84,21 @@ func (p *Platform) FullRebuild(
 	p.viewMu.Lock()
 	defer p.viewMu.Unlock()
 
-	p.view.Clear()
+	p.view.clearWithoutRevision()
+	p.viewEgressIPs = make(map[node.Hash]netip.Addr)
 	poolRange(func(h node.Hash, entry *node.NodeEntry) bool {
 		if p.evaluateNode(entry, subLookup, geoLookup) {
-			p.view.Add(h)
+			p.view.addWithoutRevision(h)
+			if ip := entry.GetEgressIP(); ip.IsValid() {
+				p.viewEgressIPs[h] = ip.Unmap()
+			}
 		}
 		return true
 	})
+	// Publish one revision after the complete view is rebuilt. Otherwise a
+	// concurrent sticky allocation can repeatedly rebuild its cached IP groups
+	// while this loop adds nodes one by one.
+	p.view.MarkChanged()
 }
 
 // NotifyDirty re-evaluates a single node and adds/removes it from the view.
@@ -101,18 +111,29 @@ func (p *Platform) NotifyDirty(
 ) {
 	p.viewMu.Lock()
 	defer p.viewMu.Unlock()
+	if p.viewEgressIPs == nil {
+		p.viewEgressIPs = make(map[node.Hash]netip.Addr)
+	}
 
 	entry, ok := getEntry(h)
 	if !ok {
 		// Node was deleted from pool.
 		p.view.Remove(h)
+		delete(p.viewEgressIPs, h)
 		return
 	}
 
 	if p.evaluateNode(entry, subLookup, geoLookup) {
+		ip := entry.GetEgressIP().Unmap()
+		oldIP, wasRoutable := p.viewEgressIPs[h]
 		p.view.Add(h)
+		p.viewEgressIPs[h] = ip
+		if wasRoutable && oldIP != ip {
+			p.view.MarkChanged()
+		}
 	} else {
 		p.view.Remove(h)
+		delete(p.viewEgressIPs, h)
 	}
 }
 

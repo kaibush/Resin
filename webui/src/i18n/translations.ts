@@ -411,7 +411,13 @@ Note: Once enabled, requests without authentication information are rejected ins
   "按 Account Header Rule 提取": "Extract by account header rule",
   "均衡": "Balanced",
   "优先低延迟": "Prefer low latency",
-  "优先空闲出口 IP": "Prefer idle egress IP",
+  "优先活跃租约较少的出口 IP": "Prefer the egress IP with fewer active leases",
+  "启用 Resin 本地 IP 软门限": "Enable Resin local IP soft ceiling",
+  "每个出口 IP 的活跃账号软门限": "Active account soft ceiling per egress IP",
+  "新粘性账号优先分到活跃租约数低于门限的唯一出口 IP；多个节点共用同一出口 IP 时合并计数。所有候选都达到门限时，仍选择当前负载最低的 IP 继续代理。设为 0 表示不启用门限；账号有效租约保持粘性，租约到期后重新均衡。":
+    "New sticky accounts prefer a unique egress IP with fewer active leases than this ceiling. Nodes sharing an IP use one combined count. If all candidates have reached the ceiling, proxying continues on the least-loaded IP. Set to 0 to disable the ceiling. Valid account leases stay sticky and are rebalanced after expiry.",
+  "新建粘性身份始终按唯一出口 IP 的活跃租约数均衡；此策略控制无粘性请求及所选 IP 内的节点选择。同一 IP 下的多个节点按一个 IP 统计，已有有效绑定保持不变。":
+    "New sticky identities are always balanced by active leases per unique egress IP. This policy controls requests without a sticky identity and node selection within the chosen IP. Nodes sharing an IP count as one destination, and valid existing bindings stay in place.",
   "租约保持时长": "Lease Sticky TTL",
   "租约保持时长（可选）": "Lease Sticky TTL (optional)",
   "节点名正则过滤规则": "Node name regex filters",

@@ -21,7 +21,7 @@ export const emptyAccountBehaviors: PlatformEmptyAccountBehavior[] = [
 export const allocationPolicyLabel: Record<PlatformAllocationPolicy, string> = {
   BALANCED: "均衡",
   PREFER_LOW_LATENCY: "优先低延迟",
-  PREFER_IDLE_IP: "优先空闲出口 IP",
+  PREFER_IDLE_IP: "优先活跃租约较少的出口 IP",
 };
 
 export const missActionLabel: Record<PlatformMissAction, string> = {

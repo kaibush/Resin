@@ -273,6 +273,9 @@ func TestStickyLease_Expiry(t *testing.T) {
 	if !res2.LeaseCreated {
 		t.Fatal("should create new lease after expiry")
 	}
+	if got := router.SnapshotIPLoad(platID)[res2.EgressIP]; got != 1 {
+		t.Fatalf("replacing an expired lease should leave one active IP load, got %d", got)
+	}
 
 	// Check for expiry event.
 	foundExpire := false

@@ -6,6 +6,12 @@ services:
     image: ghcr.io/resinat/resin:latest
     container_name: resin
     restart: unless-stopped
+    cpus: "0.75"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     environment:
       RESIN_ADMIN_TOKEN: ${RESIN_ADMIN_TOKEN}
       RESIN_PROXY_TOKEN: ${RESIN_PROXY_TOKEN}

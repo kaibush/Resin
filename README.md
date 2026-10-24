@@ -81,6 +81,12 @@ services:
     image: ghcr.io/resinat/resin:latest
     container_name: resin
     restart: unless-stopped
+    cpus: "0.75"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     environment:
       RESIN_ADMIN_TOKEN: "admin123" # Change to your admin dashboard password
       RESIN_PROXY_TOKEN: "my-token" # Change to your proxy password

@@ -586,6 +586,7 @@ export function PlatformDetailPage() {
                         </option>
                       ))}
                     </Select>
+                    <p className="muted">{t("新建粘性身份始终按唯一出口 IP 的活跃租约数均衡；此策略控制无粘性请求及所选 IP 内的节点选择。同一 IP 下的多个节点按一个 IP 统计，已有有效绑定保持不变。")}</p>
                   </div>
 
                   <div className="field-group field-span-2">
@@ -597,10 +598,12 @@ export function PlatformDetailPage() {
                   <div className="field-group">
  <label className="field-label" htmlFor="detail-edit-ip-governance">{t("IP 治理")}</label>
  <div className="subscription-switch-item">
- <label className="subscription-switch-label" htmlFor="detail-edit-ip-governance">{t("启用账号 IP 准入")}</label>
+ <label className="subscription-switch-label" htmlFor="detail-edit-ip-governance">{t("启用 Resin 本地 IP 软门限")}</label>
  <Switch id="detail-edit-ip-governance" {...editForm.register("ip_governance_enabled")} />
  </div>
- <p className="muted">{t("开启后，此平台请求需要治理服务准入；关闭时使用普通代理。与订阅计费方式独立，保存后生效。")}</p>
+ <label className="field-label" htmlFor="detail-edit-ip-governance-limit">{t("每个出口 IP 的活跃账号软门限")}</label>
+ <Input id="detail-edit-ip-governance-limit" type="number" min={0} max={100000} step={1} {...editForm.register("ip_governance_max_accounts_per_ip", { valueAsNumber: true })} />
+ <p className="muted">{t("新粘性账号优先分到活跃租约数低于门限的唯一出口 IP；多个节点共用同一出口 IP 时合并计数。所有候选都达到门限时，仍选择当前负载最低的 IP 继续代理。设为 0 表示不启用门限；账号有效租约保持粘性，租约到期后重新均衡。")}</p>
  </div>
  <div className="field-group">
                     <label className="field-label" htmlFor="detail-edit-passive-circuit-breaker" style={{ visibility: "hidden" }}>

@@ -1222,14 +1222,16 @@ Body：
   "reverse_proxy_empty_account_behavior": "ACCOUNT_HEADER_RULE",
   "reverse_proxy_fixed_account_header": "Authorization\nX-Account-Id",
   "allocation_policy": "BALANCED",
-  "passive_circuit_breaker_disabled": false
+  "passive_circuit_breaker_disabled": false,
+  "ip_governance_enabled": true,
+  "ip_governance_max_accounts_per_ip": 3
 }
 ```
 
 字段要求：
 
 * 必填字段：`name`
-* 可选字段：`sticky_ttl`、`regex_filters`、`region_filters`、`reverse_proxy_miss_action`、`reverse_proxy_empty_account_behavior`、`reverse_proxy_fixed_account_header`、`allocation_policy`、`passive_circuit_breaker_disabled`
+* 可选字段：`sticky_ttl`、`regex_filters`、`region_filters`、`reverse_proxy_miss_action`、`reverse_proxy_empty_account_behavior`、`reverse_proxy_fixed_account_header`、`allocation_policy`、`passive_circuit_breaker_disabled`、`ip_governance_enabled`、`ip_governance_max_accounts_per_ip`
 * 不可传字段：`id`、`updated_at`、`routable_node_count`
 * 省略可选字段时，平台策略字段使用当前环境变量默认平台设置（`RESIN_DEFAULT_PLATFORM_*`）对应值；`passive_circuit_breaker_disabled` 默认 `false`
 
@@ -1240,6 +1242,8 @@ Body：
 * `regex_filters`：节点标签过滤规则列表，语义与校验见“节点标签过滤规则”。
 * `region_filters`：每项为 ISO 3166-1 alpha-2 小写代码。
 * 枚举字段：`reverse_proxy_miss_action` 仅 `TREAT_AS_EMPTY|REJECT`；`reverse_proxy_empty_account_behavior` 仅 `RANDOM|FIXED_HEADER|ACCOUNT_HEADER_RULE`；`allocation_policy` 仅 `BALANCED|PREFER_LOW_LATENCY|PREFER_IDLE_IP`。
+* 新建粘性身份始终按当前平台视图中的唯一出口 IP 统计活跃租约数，并优先落到租约较少的 IP；同一出口 IP 下的多个节点不增加该 IP 的权重。已有有效粘性绑定保持不变。`allocation_policy` 继续控制无粘性请求和所选 IP 内的节点选择。
+* `ip_governance_enabled`：是否对新建粘性身份应用本地 IP 软门限；默认 `false`。`ip_governance_max_accounts_per_ip`：每个出口 IP 的活跃账号软门限，范围 `0`～`100000`，默认 `3`；`0` 表示不设门限。低于门限的 IP 优先；池内所有 IP 达到门限时仍选择活跃租约数最少者，不拒绝请求。活跃数按不同粘性账号的租约增减，不是历史累计数。
 * `passive_circuit_breaker_disabled`：布尔值。设为 `true` 后，此 Platform 的用户代理请求失败不会增加节点熔断计数；主动探测不受影响。成功请求仍会清除节点连续失败计数并可恢复熔断节点。
 * 组合约束：当 `reverse_proxy_empty_account_behavior=FIXED_HEADER` 时，`reverse_proxy_fixed_account_header` 必填；其值支持多行，每行一个合法 HTTP Header 字段名（会按顺序尝试提取）。
 

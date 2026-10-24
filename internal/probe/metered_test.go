@@ -84,7 +84,6 @@ func TestMeteredFirstRouteVerifiesAndReusesLease(t *testing.T) {
 	f := newMeteredFixture(t)
 	h := f.add(1)
 	r := routing.NewRouter(routing.RouterConfig{Pool: f.pool, Authorities: func() []string { return []string{"cloudflare.com"} }, P2CWindow: func() time.Duration { return time.Hour }, PrepareRoute: f.m.PrepareRoute, VerifyNode: f.m.VerifyPlatformNode})
-	t.Setenv("RESIN_GOVERNANCE_URL", "")
 	for i := 0; i < 3; i++ {
 		res, err := r.RouteRequest("", "account", "example.com")
 		if err != nil {

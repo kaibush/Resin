@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/Resinat/Resin/internal/scanloop"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 // LeaseCleaner periodically sweeps for expired leases.
@@ -103,42 +103,38 @@ func (c *LeaseCleaner) sweep() {
 	wg.Wait()
 }
 
+const leaseExpirySweepBatchLimit = 256
+
 func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingState, nowNs int64) {
-	// Iterate over all leases for this platform
-	state.Leases.Range(func(account string, lease Lease) bool {
-		// Check against stop signal
+	// Expiry deadlines are kept in a min-heap, so a sweep visits only leases
+	// that have actually expired instead of scanning the full account map. A
+	// bounded batch prevents a mass expiry from monopolizing a CPU core.
+	for handled := 0; handled < leaseExpirySweepBatchLimit; handled++ {
 		select {
 		case <-c.stopCh:
-			return false
+			return
 		default:
 		}
-
-		if lease.ExpiryNs < nowNs {
-			// Expired. Use Compute to verify and delete atomically.
-			state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
-				if !loaded {
-					return current, xsync.CancelOp
-				}
-				// Double-check expiry inside lock
-				if current.ExpiryNs < nowNs {
-					state.Leases.stats.Dec(current.EgressIP)
-
-					if c.router.onLeaseEvent != nil {
-						c.router.onLeaseEvent(LeaseEvent{
-							Type:        LeaseExpire,
-							PlatformID:  platID,
-							Account:     account,
-							NodeHash:    current.NodeHash,
-							EgressIP:    current.EgressIP,
-							CreatedAtNs: current.CreatedAtNs,
-						})
-					}
-
-					return current, xsync.DeleteOp
-				}
-				return current, xsync.CancelOp // Renewed concurrently, don't delete
-			})
+		account, ok := state.Leases.takeExpiredAccount(nowNs)
+		if !ok {
+			return
 		}
-		return true
-	})
+		state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+			if !loaded || current.ExpiryNs >= nowNs {
+				return current, xsync.CancelOp
+			}
+			state.Leases.stats.Dec(current.EgressIP)
+			if c.router.onLeaseEvent != nil {
+				c.router.onLeaseEvent(LeaseEvent{
+					Type:        LeaseExpire,
+					PlatformID:  platID,
+					Account:     account,
+					NodeHash:    current.NodeHash,
+					EgressIP:    current.EgressIP,
+					CreatedAtNs: current.CreatedAtNs,
+				})
+			}
+			return current, xsync.DeleteOp
+		})
+	}
 }

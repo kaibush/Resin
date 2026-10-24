@@ -3,6 +3,7 @@ package routing
 import (
 	"errors"
 	"math/rand/v2"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -20,7 +21,9 @@ var randomRouteRNGPool = sync.Pool{
 
 // randomRoute selects a routable node using P2C with latency/load scoring.
 // It intentionally trusts Platform.View as the routable source of truth and
-// does not do extra pool scans/availability validation on the hot path.
+// does not scan the pool on the ordinary hot path. Sticky lease creation and
+// PREFER_IDLE_IP use a cached per-view IP grouping rebuilt only after routable
+// membership or an egress IP changes.
 // Post-pick race handling (node removed right after selection) is handled by
 // the caller in RouteRequest.
 func randomRoute(
@@ -30,6 +33,7 @@ func randomRoute(
 	targetDomain string,
 	authorities []string,
 	p2cWindow time.Duration,
+	balanceStickyIP bool,
 ) (node.Hash, error) {
 	view := plat.View()
 	size := view.Size()
@@ -39,6 +43,13 @@ func randomRoute(
 
 	rng := randomRouteRNGPool.Get().(*rand.Rand)
 	defer randomRouteRNGPool.Put(rng)
+	if balanceStickyIP || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
+		maxAccountsPerIP := int64(0)
+		if balanceStickyIP && plat.IPGovernanceEnabled {
+			maxAccountsPerIP = int64(plat.IPGovernanceMaxAccountsPerIP)
+		}
+		return leastLoadedIPRoute(view, stats, pool, rng, plat, targetDomain, authorities, p2cWindow, maxAccountsPerIP)
+	}
 
 	pick := func() (node.Hash, bool) {
 		return view.RandomPick(rng)
@@ -89,6 +100,93 @@ func randomRoute(
 		selected = h1
 	}
 	return selected, nil
+}
+
+// leastLoadedIPRoute assigns a new sticky identity to one of the least-used
+// egress IPs in the current platform view. Nodes sharing an IP count as one
+// destination, so subscriptions with duplicate routes do not get extra weight.
+func leastLoadedIPRoute(
+	view platform.ReadOnlyView,
+	stats *IPLoadStats,
+	pool PoolAccessor,
+	rng *rand.Rand,
+	plat *platform.Platform,
+	targetDomain string,
+	authorities []string,
+	p2cWindow time.Duration,
+	maxAccountsPerIP int64,
+) (node.Hash, error) {
+	byIP := stats.candidateNodes(view, pool)
+	if len(byIP) == 0 {
+		return node.Zero, ErrNoAvailableNodes
+	}
+
+	leastBelowCeiling := int64(^uint64(0) >> 1)
+	leastOverall := int64(^uint64(0) >> 1)
+	ipsBelowCeiling := make([]netip.Addr, 0, len(byIP))
+	ipsOverall := make([]netip.Addr, 0, len(byIP))
+	for ip := range byIP {
+		load := stats.allocationLoad(ip)
+		if load < 0 {
+			load = 0
+		}
+		if load < leastOverall {
+			leastOverall = load
+			ipsOverall = ipsOverall[:0]
+		}
+		if load == leastOverall {
+			ipsOverall = append(ipsOverall, ip)
+		}
+		if maxAccountsPerIP > 0 && load >= maxAccountsPerIP {
+			continue
+		}
+		if load < leastBelowCeiling {
+			leastBelowCeiling = load
+			ipsBelowCeiling = ipsBelowCeiling[:0]
+		}
+		if load == leastBelowCeiling {
+			ipsBelowCeiling = append(ipsBelowCeiling, ip)
+		}
+	}
+	ips := ipsBelowCeiling
+	if len(ips) == 0 {
+		// A soft ceiling never blocks a healthy proxy pool. Once every unique IP
+		// has reached its ceiling, continue on the least-loaded IP.
+		ips = ipsOverall
+	}
+	selectedIP := ips[rng.IntN(len(ips))]
+	nodes := byIP[selectedIP]
+	return bestNodeWithinIP(nodes, plat, stats, pool, targetDomain, authorities, p2cWindow, rng), nil
+}
+
+// bestNodeWithinIP keeps the configured latency/load policy useful among
+// nodes that share the selected egress IP. IP balancing remains the first
+// decision for sticky identities, so duplicate nodes never gain extra IP
+// weight.
+func bestNodeWithinIP(
+	nodes []node.Hash,
+	plat *platform.Platform,
+	stats *IPLoadStats,
+	pool PoolAccessor,
+	targetDomain string,
+	authorities []string,
+	p2cWindow time.Duration,
+	rng *rand.Rand,
+) node.Hash {
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+	h1Index := rng.IntN(len(nodes))
+	h2Index := rng.IntN(len(nodes) - 1)
+	if h2Index >= h1Index {
+		h2Index++
+	}
+	h1, h2 := nodes[h1Index], nodes[h2Index]
+	lat1, lat2 := compareLatencies(h1, h2, pool, targetDomain, authorities, p2cWindow)
+	if calculateScore(h1, lat1, plat, stats, pool) < calculateScore(h2, lat2, plat, stats, pool) {
+		return h1
+	}
+	return h2
 }
 
 // compareLatencies determines the latency values for h1 and h2.

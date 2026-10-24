@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/netip"
 	"strings"
 	"time"
 
@@ -169,6 +170,16 @@ func (s *ControlPlaneService) GetIPLoad(platformID string) ([]IPLoadEntry, error
 		})
 	}
 	return result, nil
+}
+
+// GetIPLeaseCount performs a constant-time-per-platform lookup using Resin's
+// maintained IP counters instead of enumerating persisted sticky leases.
+func (s *ControlPlaneService) GetIPLeaseCount(ip string) (int64, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil || address.Zone() != "" || !address.IsValid() {
+		return 0, invalidArg("egress_ip: must be a valid IP address")
+	}
+	return s.Router.LeaseIPCount(address.Unmap()), nil
 }
 
 // Only display a verification timestamp when it belongs to the lease's IP.

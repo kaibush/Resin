@@ -39,6 +39,7 @@ export const platformFormSchema = z.object({
   allocation_policy: z.enum(allocationPolicies),
   passive_circuit_breaker_disabled: z.boolean(),
   ip_governance_enabled: z.boolean(),
+  ip_governance_max_accounts_per_ip: z.number().int().min(0).max(100000),
   egress_verification_max_age:z.string(),
 }).superRefine((value, ctx) => {
   if (
@@ -66,6 +67,7 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   allocation_policy: "BALANCED",
   passive_circuit_breaker_disabled: false,
   ip_governance_enabled: false,
+  ip_governance_max_accounts_per_ip: 3,
   egress_verification_max_age:"0s",
 };
 
@@ -84,6 +86,7 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
     allocation_policy: platform.allocation_policy,
     passive_circuit_breaker_disabled: platform.passive_circuit_breaker_disabled,
     ip_governance_enabled: platform.ip_governance_enabled,
+    ip_governance_max_accounts_per_ip: platform.ip_governance_max_accounts_per_ip,
     egress_verification_max_age:platform.egress_verification_max_age || "0s",
   };
 }
@@ -99,6 +102,7 @@ function toPlatformPayloadBase(values: PlatformFormValues) {
     allocation_policy: values.allocation_policy,
     passive_circuit_breaker_disabled: values.passive_circuit_breaker_disabled,
     ip_governance_enabled: values.ip_governance_enabled,
+    ip_governance_max_accounts_per_ip: values.ip_governance_max_accounts_per_ip,
     egress_verification_max_age:values.egress_verification_max_age.trim() || "0s",
   };
 }

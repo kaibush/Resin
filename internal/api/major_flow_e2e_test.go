@@ -355,6 +355,14 @@ func TestMajorFlow_E2E_LocalProxyAndSubscriptionProvider(t *testing.T) {
 	if len(leaseItems) != 1 {
 		t.Fatalf("expected 1 lease for account=%q, got %d, body=%s", account, len(leaseItems), leasesRec.Body.String())
 	}
+	ipCountRec := doJSONRequest(t, h.apiServer, http.MethodGet, "/api/v1/leases/ip-count?egress_ip="+lease.EgressIP, nil, true)
+	if ipCountRec.Code != http.StatusOK {
+		t.Fatalf("IP lease count status: got %d, want %d, body=%s", ipCountRec.Code, http.StatusOK, ipCountRec.Body.String())
+	}
+	ipCountBody := decodeJSONMap(t, ipCountRec)
+	if ipCountBody["count"] != float64(1) {
+		t.Fatalf("IP lease count = %v, want 1", ipCountBody["count"])
+	}
 
 	var requestLogItems []any
 	deadline := time.Now().Add(2 * time.Second)

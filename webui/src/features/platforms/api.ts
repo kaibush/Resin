@@ -33,6 +33,8 @@ function normalizePlatform(raw: ApiPlatform): Platform {
   return {
     ...raw,
     ip_governance_enabled: raw.ip_governance_enabled === true,
+    ip_governance_max_accounts_per_ip:
+      typeof raw.ip_governance_max_accounts_per_ip === "number" ? raw.ip_governance_max_accounts_per_ip : 3,
     egress_verification_max_age: raw.egress_verification_max_age || "0s",
     reverse_proxy_miss_action: parseMissAction(raw.reverse_proxy_miss_action),
     regex_filters: Array.isArray(raw.regex_filters) ? raw.regex_filters : [],

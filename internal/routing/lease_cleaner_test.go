@@ -9,6 +9,7 @@ import (
 
 	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/platform"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 func TestLeaseCleaner_StopWaitsForInFlightSweep(t *testing.T) {
@@ -134,5 +135,55 @@ func TestLeaseCleaner_SweepPlatformsInParallel(t *testing.T) {
 
 	if got := eventCount.Load(); got != 2 {
 		t.Fatalf("expected 2 LeaseExpire events, got %d", got)
+	}
+}
+
+func TestLeaseExpiryIndexTracksRenewalAndDeletion(t *testing.T) {
+	stats := NewIPLoadStats()
+	leases := NewLeaseTable(stats)
+	now := time.Now()
+	ip := netip.MustParseAddr("203.0.113.90")
+
+	leases.CreateLease("acct", Lease{EgressIP: ip, ExpiryNs: now.Add(-time.Second).UnixNano()})
+	leases.CreateLease("acct", Lease{EgressIP: ip, ExpiryNs: now.Add(time.Hour).UnixNano()})
+	if account, ok := leases.takeExpiredAccount(now.UnixNano()); ok {
+		t.Fatalf("renewed lease remained on the expired queue: %q", account)
+	}
+
+	if _, deleted := leases.DeleteLease("acct"); !deleted {
+		t.Fatal("expected renewed lease to be deleted")
+	}
+	if account, ok := leases.takeExpiredAccount(now.Add(2 * time.Hour).UnixNano()); ok {
+		t.Fatalf("deleted lease remained on the expiry queue: %q", account)
+	}
+	if got := stats.Get(ip); got != 0 {
+		t.Fatalf("deleted lease left IP load %d, want 0", got)
+	}
+}
+
+func TestLeaseExpiryIndexKeepsRenewalAfterCleanerPopsOldDeadline(t *testing.T) {
+	stats := NewIPLoadStats()
+	leases := NewLeaseTable(stats)
+	now := time.Now()
+	ip := netip.MustParseAddr("203.0.113.91")
+	leases.CreateLease("acct", Lease{EgressIP: ip, ExpiryNs: now.Add(-time.Second).UnixNano()})
+
+	account, ok := leases.takeExpiredAccount(now.UnixNano())
+	if !ok || account != "acct" {
+		t.Fatalf("expired deadline pop = (%q, %v), want (acct, true)", account, ok)
+	}
+	leases.CreateLease("acct", Lease{EgressIP: ip, ExpiryNs: now.Add(time.Hour).UnixNano()})
+	leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+		if !loaded || current.ExpiryNs < now.UnixNano() {
+			return current, xsync.DeleteOp
+		}
+		return current, xsync.CancelOp
+	})
+	if account, ok := leases.takeExpiredAccount(now.UnixNano()); ok {
+		t.Fatalf("renewed lease was requeued as expired: %q", account)
+	}
+	account, ok = leases.takeExpiredAccount(now.Add(2 * time.Hour).UnixNano())
+	if !ok || account != "acct" {
+		t.Fatalf("renewed deadline pop = (%q, %v), want (acct, true)", account, ok)
 	}
 }

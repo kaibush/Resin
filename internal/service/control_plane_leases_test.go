@@ -48,6 +48,25 @@ func seedLease(t *testing.T, cp *ControlPlaneService, lease model.Lease) {
 	}
 }
 
+func TestGetIPLeaseCountUsesMaintainedCountersAcrossPlatforms(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+	now := time.Now().UnixNano()
+	for _, lease := range []model.Lease{
+		{PlatformID: plat.ID, Account: "alice", NodeHash: node.Zero.Hex(), EgressIP: "203.0.113.20", ExpiryNs: now + int64(time.Hour)},
+		{PlatformID: plat.ID, Account: "bob", NodeHash: node.Zero.Hex(), EgressIP: "203.0.113.20", ExpiryNs: now + int64(time.Hour)},
+		{PlatformID: "other-platform", Account: "carol", NodeHash: node.Zero.Hex(), EgressIP: "::ffff:203.0.113.20", ExpiryNs: now + int64(time.Hour)},
+	} {
+		seedLease(t, cp, lease)
+	}
+	got, err := cp.GetIPLeaseCount("203.0.113.20")
+	if err != nil || got != 3 {
+		t.Fatalf("count=%d err=%v, want 3", got, err)
+	}
+	if _, err := cp.GetIPLeaseCount("not-an-ip"); err == nil {
+		t.Fatal("invalid IP was accepted")
+	}
+}
+
 func assertServiceErrorCode(t *testing.T, err error, code string) {
 	t.Helper()
 	var svcErr *ServiceError

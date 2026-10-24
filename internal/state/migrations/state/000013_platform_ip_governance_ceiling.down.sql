@@ -1,0 +1,1 @@
+ALTER TABLE platforms DROP COLUMN ip_governance_max_accounts_per_ip;

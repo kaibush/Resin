@@ -34,6 +34,7 @@ type PlatformResponse struct {
 	AllocationPolicy                 string   `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    bool     `json:"passive_circuit_breaker_disabled"`
 	IPGovernanceEnabled              bool     `json:"ip_governance_enabled"`
+	IPGovernanceMaxAccountsPerIP     int      `json:"ip_governance_max_accounts_per_ip"`
 	UpdatedAt                        string   `json:"updated_at"`
 }
 
@@ -54,6 +55,7 @@ func platformToResponse(p model.Platform) PlatformResponse {
 		AllocationPolicy:                 p.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    p.PassiveCircuitBreakerDisabled,
 		IPGovernanceEnabled:              p.IPGovernanceEnabled,
+		IPGovernanceMaxAccountsPerIP:     p.IPGovernanceMaxAccountsPerIP,
 		UpdatedAt:                        time.Unix(0, p.UpdatedAtNs).UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -82,6 +84,7 @@ type platformConfig struct {
 	AllocationPolicy                 string
 	PassiveCircuitBreakerDisabled    bool
 	IPGovernanceEnabled              bool
+	IPGovernanceMaxAccountsPerIP     int
 }
 
 func normalizePlatformMissAction(raw string) string {
@@ -112,7 +115,8 @@ func (s *ControlPlaneService) defaultPlatformConfig(name string) platformConfig 
 		ReverseProxyFixedAccountHeader: normalizeHeaderFieldName(
 			s.EnvCfg.DefaultPlatformReverseProxyFixedAccountHeader,
 		),
-		AllocationPolicy: s.EnvCfg.DefaultPlatformAllocationPolicy,
+		AllocationPolicy:             s.EnvCfg.DefaultPlatformAllocationPolicy,
+		IPGovernanceMaxAccountsPerIP: 3,
 	}
 }
 
@@ -129,6 +133,7 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 		AllocationPolicy:                 mp.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    mp.PassiveCircuitBreakerDisabled,
 		IPGovernanceEnabled:              mp.IPGovernanceEnabled,
+		IPGovernanceMaxAccountsPerIP:     mp.IPGovernanceMaxAccountsPerIP,
 	}
 }
 
@@ -146,6 +151,7 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		AllocationPolicy:                 cfg.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    cfg.PassiveCircuitBreakerDisabled,
 		IPGovernanceEnabled:              cfg.IPGovernanceEnabled,
+		IPGovernanceMaxAccountsPerIP:     cfg.IPGovernanceMaxAccountsPerIP,
 		UpdatedAtNs:                      updatedAtNs,
 	}
 }
@@ -168,6 +174,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.PassiveCircuitBreakerDisabled,
 	)
 	plat.IPGovernanceEnabled = cfg.IPGovernanceEnabled
+	plat.IPGovernanceMaxAccountsPerIP = cfg.IPGovernanceMaxAccountsPerIP
 	plat.EgressVerificationMaxAgeNs = cfg.EgressVerificationMaxAgeNs
 	return plat, nil
 }
@@ -277,6 +284,9 @@ func validatePlatformConfig(cfg *platformConfig, validateRegionFilters bool) *Se
 			return invalidArg(err.Error())
 		}
 	}
+	if cfg.IPGovernanceMaxAccountsPerIP < 0 || cfg.IPGovernanceMaxAccountsPerIP > 100000 {
+		return invalidArg("ip_governance_max_accounts_per_ip: must be between 0 and 100000")
+	}
 	if err := validatePlatformEmptyAccountConfig(cfg); err != nil {
 		return err
 	}
@@ -352,6 +362,7 @@ type CreatePlatformRequest struct {
 	AllocationPolicy                 *string  `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    *bool    `json:"passive_circuit_breaker_disabled"`
 	IPGovernanceEnabled              *bool    `json:"ip_governance_enabled"`
+	IPGovernanceMaxAccountsPerIP     *int     `json:"ip_governance_max_accounts_per_ip"`
 }
 
 // CreatePlatform creates a new platform.
@@ -415,6 +426,9 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 	}
 	if req.IPGovernanceEnabled != nil {
 		cfg.IPGovernanceEnabled = *req.IPGovernanceEnabled
+	}
+	if req.IPGovernanceMaxAccountsPerIP != nil {
+		cfg.IPGovernanceMaxAccountsPerIP = *req.IPGovernanceMaxAccountsPerIP
 	}
 	if req.PassiveCircuitBreakerDisabled != nil {
 		cfg.PassiveCircuitBreakerDisabled = *req.PassiveCircuitBreakerDisabled
@@ -540,6 +554,11 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 		return nil, err
 	} else if ok {
 		cfg.IPGovernanceEnabled = enabled
+	}
+	if limit, ok, err := patch.optionalInt("ip_governance_max_accounts_per_ip"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.IPGovernanceMaxAccountsPerIP = limit
 	}
 	if disabled, ok, err := patch.optionalBool("passive_circuit_breaker_disabled"); err != nil {
 		return nil, err

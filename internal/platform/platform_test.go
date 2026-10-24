@@ -321,6 +321,30 @@ func TestPlatform_NotifyDirty_AddRemove(t *testing.T) {
 	}
 }
 
+func TestPlatform_NotifyDirtyOnlyChangesRevisionForIPOrMembership(t *testing.T) {
+	p := NewPlatform("p1", "Test", nil, nil)
+	h := makeHash(`{"type":"ss","id":"revision"}`)
+	entry := makeFullyRoutableEntry(h, "sub1")
+	getEntry := func(hash node.Hash) (*node.NodeEntry, bool) {
+		return entry, hash == h
+	}
+	p.FullRebuild(func(fn func(node.Hash, *node.NodeEntry) bool) {
+		fn(h, entry)
+	}, alwaysLookup, usGeoLookup)
+
+	before := p.View().Revision()
+	p.NotifyDirty(h, getEntry, alwaysLookup, usGeoLookup)
+	if got := p.View().Revision(); got != before {
+		t.Fatalf("unchanged routable node invalidated the IP snapshot: %d -> %d", before, got)
+	}
+
+	entry.SetEgressIP(netip.MustParseAddr("1.2.3.5"))
+	p.NotifyDirty(h, getEntry, alwaysLookup, usGeoLookup)
+	if got := p.View().Revision(); got == before {
+		t.Fatal("egress IP change did not invalidate the IP snapshot")
+	}
+}
+
 func TestPlatform_FullRebuild_ClearsOld(t *testing.T) {
 	p := NewPlatform("p1", "Test", nil, nil)
 	h1 := makeHash(`{"type":"ss","n":1}`)
@@ -329,19 +353,27 @@ func TestPlatform_FullRebuild_ClearsOld(t *testing.T) {
 	e2 := makeFullyRoutableEntry(h2, "sub1")
 
 	// First rebuild with 2 nodes.
+	revision := p.View().Revision()
 	p.FullRebuild(func(fn func(node.Hash, *node.NodeEntry) bool) {
 		fn(h1, e1)
 		fn(h2, e2)
 	}, alwaysLookup, usGeoLookup)
+	if got := p.View().Revision(); got != revision+1 {
+		t.Fatalf("full rebuild published %d revisions, want one", got-revision)
+	}
 
 	if p.View().Size() != 2 {
 		t.Fatalf("expected 2, got %d", p.View().Size())
 	}
 
 	// Second rebuild with only 1 node — old entries cleared.
+	revision = p.View().Revision()
 	p.FullRebuild(func(fn func(node.Hash, *node.NodeEntry) bool) {
 		fn(h1, e1)
 	}, alwaysLookup, usGeoLookup)
+	if got := p.View().Revision(); got != revision+1 {
+		t.Fatalf("replacement rebuild published %d revisions, want one", got-revision)
+	}
 
 	if p.View().Size() != 1 {
 		t.Fatalf("expected 1 after rebuild, got %d", p.View().Size())

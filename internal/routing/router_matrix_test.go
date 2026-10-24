@@ -3,7 +3,9 @@ package routing
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,9 +14,91 @@ import (
 	"github.com/Resinat/Resin/internal/platform"
 )
 
+func TestStickyLeasesBalanceAcrossUniqueIPs(t *testing.T) {
+	for _, policy := range []platform.AllocationPolicy{
+		platform.AllocationPolicyBalanced,
+		platform.AllocationPolicyPreferLowLatency,
+		platform.AllocationPolicyPreferIdleIP,
+	} {
+		t.Run(string(policy), func(t *testing.T) {
+			pool := newRouterTestPool()
+			plat := platform.NewPlatform("balanced", "Balanced", nil, nil)
+			plat.AllocationPolicy = policy
+			pool.addPlatform(plat)
+
+			entries := []struct{ raw, ip string }{
+				{`{"id":"a1"}`, "192.0.2.1"},
+				{`{"id":"a2"}`, "192.0.2.1"},
+				{`{"id":"a3"}`, "192.0.2.1"},
+				{`{"id":"b"}`, "192.0.2.2"},
+				{`{"id":"c"}`, "192.0.2.3"},
+			}
+			for _, item := range entries {
+				hash, entry := newRoutableEntry(t, item.raw, item.ip)
+				pool.addEntry(hash, entry)
+			}
+			pool.rebuildPlatformView(plat)
+			router := newTestRouter(pool, nil)
+
+			var wg sync.WaitGroup
+			for i := 0; i < 18; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					if _, err := router.RouteRequest("Balanced", fmt.Sprintf("account-%d", i), "example.com"); err != nil {
+						t.Errorf("route account %d: %v", i, err)
+					}
+				}(i)
+			}
+			wg.Wait()
+
+			loads := router.SnapshotIPLoad(plat.ID)
+			if len(loads) != 3 {
+				t.Fatalf("lease load tracked %d IPs, want three unique egress IPs: %+v", len(loads), loads)
+			}
+			for ip, count := range loads {
+				if count != 6 {
+					t.Fatalf("IP %s has %d leases, want 6 across three unique IPs: %+v", ip, count, loads)
+				}
+			}
+		})
+	}
+}
+
 type getEntryCountPool struct {
 	inner    PoolAccessor
 	getCalls int
+}
+
+func TestIPRouteSnapshotDoesNotRescanUnchangedView(t *testing.T) {
+	pool := newRouterTestPool()
+	plat := platform.NewPlatform("snapshot", "Snapshot", nil, nil)
+	pool.addPlatform(plat)
+	for i := 0; i < 3; i++ {
+		hash, entry := newRoutableEntry(t, fmt.Sprintf(`{"id":"node-%d"}`, i), fmt.Sprintf("192.0.2.%d", i+1))
+		pool.addEntry(hash, entry)
+	}
+	pool.rebuildPlatformView(plat)
+	countingPool := &getEntryCountPool{inner: pool}
+	stats := NewIPLoadStats()
+
+	first := stats.candidateNodes(plat.View(), countingPool)
+	firstCalls := countingPool.getCalls
+	if len(first) != 3 || firstCalls != 3 {
+		t.Fatalf("initial snapshot: IPs=%d pool reads=%d", len(first), firstCalls)
+	}
+	_ = stats.candidateNodes(plat.View(), countingPool)
+	if countingPool.getCalls != firstCalls {
+		t.Fatalf("unchanged view rescanned pool: reads %d -> %d", firstCalls, countingPool.getCalls)
+	}
+
+	hash, entry := newRoutableEntry(t, `{"id":"node-4"}`, "192.0.2.4")
+	pool.addEntry(hash, entry)
+	pool.rebuildPlatformView(plat)
+	updated := stats.candidateNodes(plat.View(), countingPool)
+	if len(updated) != 4 || countingPool.getCalls != firstCalls+4 {
+		t.Fatalf("changed view did not rebuild snapshot: IPs=%d pool reads=%d", len(updated), countingPool.getCalls)
+	}
 }
 
 func (p *getEntryCountPool) GetEntry(hash node.Hash) (*node.NodeEntry, bool) {
@@ -144,6 +228,7 @@ func TestRandomRoute_SingleNodeTrustsViewWithoutPoolValidation(t *testing.T) {
 		"example.com",
 		[]string{"cloudflare.com"},
 		10*time.Minute,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("randomRoute failed: %v", err)

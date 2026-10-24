@@ -152,8 +152,9 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 		INSERT INTO platforms (id, name, sticky_ttl_ns, regex_filters_json, region_filters_json,
 		                       reverse_proxy_miss_action, reverse_proxy_empty_account_behavior,
 		                       reverse_proxy_fixed_account_header, allocation_policy,
-		                       passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled,
+		                       ip_governance_max_accounts_per_ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name                     = excluded.name,
 			sticky_ttl_ns            = excluded.sticky_ttl_ns,
@@ -166,10 +167,12 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 			passive_circuit_breaker_disabled = excluded.passive_circuit_breaker_disabled,
 			egress_verification_max_age_ns=excluded.egress_verification_max_age_ns,
 			ip_governance_enabled=excluded.ip_governance_enabled,
+			ip_governance_max_accounts_per_ip=excluded.ip_governance_max_accounts_per_ip,
 			updated_at_ns            = excluded.updated_at_ns
 	`, p.ID, p.Name, p.StickyTTLNs, regexFiltersJSON, regionFiltersJSON,
 		p.ReverseProxyMissAction, p.ReverseProxyEmptyAccountBehavior, p.ReverseProxyFixedAccountHeader,
-		p.AllocationPolicy, p.PassiveCircuitBreakerDisabled, p.UpdatedAtNs, p.EgressVerificationMaxAgeNs, p.IPGovernanceEnabled)
+		p.AllocationPolicy, p.PassiveCircuitBreakerDisabled, p.UpdatedAtNs, p.EgressVerificationMaxAgeNs,
+		p.IPGovernanceEnabled, p.IPGovernanceMaxAccountsPerIP)
 	if err != nil {
 		if isSQLiteUniqueConstraint(err) {
 			return fmt.Errorf("%w: platform name already exists", ErrConflict)
@@ -225,7 +228,8 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 	row := r.db.QueryRow(`SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json,
 			reverse_proxy_miss_action, reverse_proxy_empty_account_behavior,
 			reverse_proxy_fixed_account_header, allocation_policy,
-			passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled
+			passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled,
+			ip_governance_max_accounts_per_ip
 			FROM platforms WHERE id = ?`, id)
 
 	var p model.Platform
@@ -233,7 +237,8 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 	var passiveCircuitBreakerDisabled int
 	if err := row.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 		&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
-		&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs, &p.EgressVerificationMaxAgeNs, &p.IPGovernanceEnabled); err != nil {
+		&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs,
+		&p.EgressVerificationMaxAgeNs, &p.IPGovernanceEnabled, &p.IPGovernanceMaxAccountsPerIP); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -255,7 +260,7 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 
 // ListPlatforms returns all platforms.
 func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
-	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled FROM platforms")
+	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, updated_at_ns, egress_verification_max_age_ns, ip_governance_enabled, ip_governance_max_accounts_per_ip FROM platforms")
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +273,8 @@ func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
 		var passiveCircuitBreakerDisabled int
 		if err := rows.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 			&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
-			&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs, &p.EgressVerificationMaxAgeNs, &p.IPGovernanceEnabled); err != nil {
+			&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled, &p.UpdatedAtNs,
+			&p.EgressVerificationMaxAgeNs, &p.IPGovernanceEnabled, &p.IPGovernanceMaxAccountsPerIP); err != nil {
 			return nil, err
 		}
 		p.PassiveCircuitBreakerDisabled = passiveCircuitBreakerDisabled != 0

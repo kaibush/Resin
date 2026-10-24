@@ -17,6 +17,7 @@ const numShards = 64
 type ReadOnlyView interface {
 	Contains(h node.Hash) bool
 	Size() int
+	Revision() uint64
 	RandomPick(rng *rand.Rand) (node.Hash, bool)
 	Range(fn func(node.Hash) bool)
 }
@@ -24,8 +25,9 @@ type ReadOnlyView interface {
 // RoutableView is a 64-shard concurrent set supporting O(1) random pick,
 // O(1) add, O(1) remove, and O(1) contains.
 type RoutableView struct {
-	shards [numShards]shard
-	size   atomic.Int64 // total count across all shards
+	shards   [numShards]shard
+	size     atomic.Int64 // total count across all shards
+	revision atomic.Uint64
 }
 
 type shard struct {
@@ -60,6 +62,7 @@ func (rv *RoutableView) Add(h node.Hash) {
 	s.index[h] = len(s.nodes)
 	s.nodes = append(s.nodes, h)
 	rv.size.Add(1)
+	rv.revision.Add(1)
 }
 
 // Remove deletes a hash from the view. No-op if absent.
@@ -80,6 +83,7 @@ func (rv *RoutableView) Remove(h node.Hash) {
 	s.nodes = s.nodes[:last]
 	delete(s.index, h)
 	rv.size.Add(-1)
+	rv.revision.Add(1)
 }
 
 // Contains returns true if the hash is in the view.
@@ -96,8 +100,26 @@ func (rv *RoutableView) Size() int {
 	return int(rv.size.Load())
 }
 
+// Revision returns a monotonically increasing value whenever view membership
+// or the attributes of a member that affect routing are re-evaluated.
+func (rv *RoutableView) Revision() uint64 {
+	return rv.revision.Load()
+}
+
+// MarkChanged invalidates derived routing snapshots after a node is
+// re-evaluated even when it remains a member of the view.
+func (rv *RoutableView) MarkChanged() {
+	rv.revision.Add(1)
+}
+
 // Clear removes all entries from all shards.
 func (rv *RoutableView) Clear() {
+	rv.revision.Add(1)
+	rv.clearWithoutRevision()
+	rv.revision.Add(1)
+}
+
+func (rv *RoutableView) clearWithoutRevision() {
 	for i := range rv.shards {
 		s := &rv.shards[i]
 		s.mu.Lock()
@@ -106,6 +128,18 @@ func (rv *RoutableView) Clear() {
 		s.mu.Unlock()
 	}
 	rv.size.Store(0)
+}
+
+func (rv *RoutableView) addWithoutRevision(h node.Hash) {
+	s := &rv.shards[shardFor(h)]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.index[h]; ok {
+		return
+	}
+	s.index[h] = len(s.nodes)
+	s.nodes = append(s.nodes, h)
+	rv.size.Add(1)
 }
 
 // RandomPick selects a random hash from the view.

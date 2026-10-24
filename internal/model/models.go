@@ -18,6 +18,7 @@ type Platform struct {
 	AllocationPolicy                 string `json:"allocation_policy"`
 	PassiveCircuitBreakerDisabled    bool   `json:"passive_circuit_breaker_disabled"`
 	IPGovernanceEnabled              bool   `json:"ip_governance_enabled"`
+	IPGovernanceMaxAccountsPerIP     int    `json:"ip_governance_max_accounts_per_ip"`
 	UpdatedAtNs                      int64  `json:"updated_at_ns"`
 }
 

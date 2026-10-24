@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Resinat/Resin/internal/model"
@@ -30,9 +31,10 @@ type PoolAccessor interface {
 type Router struct {
 	prepareRoute    func(*platform.Platform, node.Hash) error
 	verifyNode      func(*platform.Platform, node.Hash) error
-	governance      *governanceClient
 	pool            PoolAccessor
 	states          *xsync.Map[string, *PlatformRoutingState]
+	globalIPStats   *IPLoadStats
+	allocationMu    sync.Mutex // serializes short cross-platform IP reservations
 	authorities     func() []string
 	p2cWindow       func() time.Duration
 	onLeaseEvent    LeaseEventFunc
@@ -54,11 +56,11 @@ type RouterConfig struct {
 
 func NewRouter(cfg RouterConfig) *Router {
 	return &Router{
-		governance:      newGovernanceClient(),
 		prepareRoute:    cfg.PrepareRoute,
 		verifyNode:      cfg.VerifyNode,
 		pool:            cfg.Pool,
 		states:          xsync.NewMap[string, *PlatformRoutingState](),
+		globalIPStats:   NewIPLoadStats(),
 		authorities:     cfg.Authorities,
 		p2cWindow:       cfg.P2CWindow,
 		onLeaseEvent:    cfg.OnLeaseEvent,
@@ -96,15 +98,6 @@ func (r *Router) RouteRequest(platName, account, target string) (RouteResult, er
 	state := r.ensurePlatformState(plat.ID)
 	var result RouteResult
 	if account == "" {
-		if r.governsPlatform(plat.ID) {
-			decision, e := r.governanceDecision(plat, account, Lease{}, false)
-			if e != nil {
-				return RouteResult{}, e
-			}
-			if decision.Mode != "audit" {
-				return RouteResult{}, ErrNoAvailableNodes
-			}
-		}
 		result, err = r.routeRandom(plat, state, targetDomain)
 	} else {
 		result, err = r.routeSticky(plat, state, account, targetDomain, time.Now())
@@ -141,8 +134,15 @@ func (r *Router) resolvePlatform(platName string) (*platform.Platform, error) {
 
 func (r *Router) ensurePlatformState(platformID string) *PlatformRoutingState {
 	state, _ := r.states.LoadOrCompute(platformID, func() (*PlatformRoutingState, bool) {
-		return NewPlatformRoutingState(), false
+		return r.newPlatformRoutingState(), false
 	})
+	return state
+}
+
+func (r *Router) newPlatformRoutingState() *PlatformRoutingState {
+	state := NewPlatformRoutingState()
+	state.IPLoadStats.global = r.globalIPStats
+	state.IPLoadStats.loadAcrossPlatforms = r.globalIPStats.GetForAllocation
 	return state
 }
 
@@ -156,7 +156,7 @@ func (r *Router) routeRandom(
 			return RouteResult{}, err
 		}
 	}
-	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
+	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, false, netip.Addr{})
 	if err != nil {
 		return RouteResult{}, err
 	}
@@ -178,7 +178,7 @@ func (r *Router) routeSticky(
 	var result RouteResult
 	var routeErr error
 
-	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if r.prepareRoute != nil {
 			h := node.Zero
 			if loaded && !current.IsExpired(time.Now()) {
@@ -192,13 +192,7 @@ func (r *Router) routeSticky(
 		// Verification can block; start the new lease TTL after it completes.
 		now = time.Now()
 		nowNs = now.UnixNano()
-		decide := r.decideStickyLease
-		if r.governsPlatform(plat.ID) {
-			decide = func(p *platform.Platform, s *PlatformRoutingState, a, t string, n time.Time, _ int64, c Lease, l bool) (Lease, xsync.ComputeOp, RouteResult, error) {
-				return r.decideGovernedLease(p, s, a, t, n, c, l)
-			}
-		}
-		newLease, op, routeResult, err := decide(
+		newLease, op, routeResult, err := r.decideStickyLease(
 			plat,
 			state,
 			account,
@@ -247,6 +241,9 @@ func (r *Router) decideStickyLease(
 		invalidation = leaseInvalidationRemove
 	}
 
+	// New bindings reserve their IP atomically across platform views in
+	// selectLiveRandomRoute. Node verification runs after that short lock is
+	// released, so one slow proxy probe cannot block other account allocations.
 	return r.createOrAbortStickyLease(
 		plat,
 		state,
@@ -271,15 +268,19 @@ func (r *Router) createOrAbortStickyLease(
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
 ) (Lease, xsync.ComputeOp, RouteResult, error) {
-	newLease, createdResult, err := r.createLease(plat, state, targetDomain, now, nowNs)
+	retireIP := netip.Addr{}
+	if hadPreviousLease {
+		retireIP = previous.EgressIP
+	}
+	newLease, createdResult, err := r.createLease(plat, state, targetDomain, now, nowNs, retireIP)
 	if err != nil {
-		r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, account)
+		r.cleanupPreviousLease(previous, hadPreviousLease, invalidation, plat.ID, account)
 		lease, op := abortLeaseCreate(previous, hadPreviousLease)
 		return lease, op, RouteResult{}, err
 	}
 
-	r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, account)
-	state.IPLoadStats.Inc(newLease.EgressIP)
+	r.cleanupPreviousLease(previous, hadPreviousLease, invalidation, plat.ID, account)
+	state.IPLoadStats.CommitReservation(newLease.EgressIP)
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseCreate,
 		PlatformID: plat.ID,
@@ -368,8 +369,9 @@ func (r *Router) createLease(
 	targetDomain string,
 	now time.Time,
 	nowNs int64,
+	retireIP netip.Addr,
 ) (Lease, RouteResult, error) {
-	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain)
+	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, true, retireIP)
 	if err != nil {
 		return Lease{}, RouteResult{}, err
 	}
@@ -393,7 +395,6 @@ func (r *Router) createLease(
 }
 
 func (r *Router) cleanupPreviousLease(
-	state *PlatformRoutingState,
 	lease Lease,
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
@@ -403,7 +404,8 @@ func (r *Router) cleanupPreviousLease(
 	if !hadPreviousLease {
 		return
 	}
-	state.Leases.stats.Dec(lease.EgressIP)
+	// The old lease's load was removed under allocationMu before choosing its
+	// replacement, so it cannot bias the new least-loaded-IP decision.
 	switch invalidation {
 	case leaseInvalidationExpire:
 		r.emitLeaseEvent(LeaseEvent{
@@ -443,24 +445,77 @@ func (r *Router) selectLiveRandomRoute(
 	plat *platform.Platform,
 	stats *IPLoadStats,
 	targetDomain string,
+	reserveLease bool,
+	retireIP netip.Addr,
 ) (node.Hash, *node.NodeEntry, error) {
 	var lastMissing node.Hash
+	if reserveLease || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
+		// A cold pool snapshot can range over all routable nodes. Build it before
+		// taking the allocator mutex so one initial request does not hold up all
+		// concurrent sticky allocations while it groups unique IPs.
+		stats.candidateNodes(plat.View(), r.pool)
+	}
 	for i := 0; i < livePickAttempts; i++ {
-		h, err := randomRoute(plat, stats, r.pool, targetDomain, r.authorities(), r.p2cWindow())
+		// Sticky identities are assigned by current unique-IP load, regardless
+		// of the platform's node scoring policy. Random requests keep the
+		// configured platform policy.
+		balanceIPs := reserveLease || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP
+		reserve := reserveLease
+		if reserve {
+			r.allocationMu.Lock()
+			stats.allocationMu.Lock()
+			if retireIP.IsValid() {
+				stats.Dec(retireIP)
+				retireIP = netip.Addr{}
+			}
+		}
+		h, err := randomRoute(plat, stats, r.pool, targetDomain, r.authorities(), r.p2cWindow(), reserveLease)
 		if err != nil {
+			if reserve {
+				stats.allocationMu.Unlock()
+				r.allocationMu.Unlock()
+			}
 			return node.Zero, nil, err
 		}
 		entry, ok := r.pool.GetEntry(h)
 		if ok {
+			selectedIP := entry.GetEgressIP().Unmap()
+			if reserve {
+				stats.Reserve(selectedIP)
+				r.globalIPStats.Reserve(selectedIP)
+				stats.allocationMu.Unlock()
+				r.allocationMu.Unlock()
+			}
+			if balanceIPs && (!selectedIP.IsValid() || !plat.View().Contains(h)) {
+				stats.InvalidateCandidateSnapshot()
+				if reserve {
+					r.releaseSelectionReservation(stats, selectedIP)
+				}
+				continue
+			}
 			if r.verifyNode != nil {
 				if err := r.verifyNode(plat, h); err != nil {
+					if reserve {
+						r.releaseSelectionReservation(stats, selectedIP)
+					}
 					return node.Zero, nil, err
 				}
-				if !plat.View().Contains(h) || !entry.IsHealthy() {
-					continue
+			}
+			currentIP := entry.GetEgressIP().Unmap()
+			if !currentIP.IsValid() || (balanceIPs && (!plat.View().Contains(h) || currentIP != selectedIP)) || (r.verifyNode != nil && !entry.IsHealthy()) {
+				if balanceIPs {
+					stats.InvalidateCandidateSnapshot()
 				}
+				if reserve {
+					r.releaseSelectionReservation(stats, selectedIP)
+				}
+				continue
 			}
 			return h, entry, nil
+		}
+		if reserve {
+			stats.allocationMu.Unlock()
+			r.allocationMu.Unlock()
 		}
 		lastMissing = h
 	}
@@ -468,6 +523,11 @@ func (r *Router) selectLiveRandomRoute(
 		return node.Zero, nil, fmt.Errorf("%w: selected node %s no longer in pool", ErrNoAvailableNodes, lastMissing.Hex())
 	}
 	return node.Zero, nil, ErrNoAvailableNodes
+}
+
+func (r *Router) releaseSelectionReservation(stats *IPLoadStats, ip netip.Addr) {
+	stats.ReleaseReservation(ip)
+	r.globalIPStats.ReleaseReservation(ip)
 }
 
 func chooseSameIPRotationCandidate(
@@ -549,20 +609,6 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 // UpsertLease writes or replaces a lease for (platform_id, account).
 // It updates per-IP lease counters and emits LeaseCreate/LeaseReplace events.
 func (r *Router) UpsertLease(ml model.Lease) error {
-	if r.governsPlatform(ml.PlatformID) {
-		p, ok := r.pool.GetPlatform(ml.PlatformID)
-		if !ok {
-			return ErrPlatformNotFound
-		}
-		policy, err := r.governanceDecision(p, ml.Account, Lease{}, false, true)
-		if err != nil {
-			return err
-		}
-		if policy.Mode != "audit" {
-			_, err = r.RouteRequest(p.Name, ml.Account, "")
-			return err
-		}
-	}
 	platformID := strings.TrimSpace(ml.PlatformID)
 	if platformID == "" {
 		return errors.New("platform_id is required")
@@ -570,6 +616,16 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	account := strings.TrimSpace(ml.Account)
 	if account == "" {
 		return errors.New("account is required")
+	}
+	if r.governsPlatform(platformID) {
+		p, ok := r.pool.GetPlatform(platformID)
+		if !ok {
+			return ErrPlatformNotFound
+		}
+		// The external Grok policy callback was removed. Resin owns allocation
+		// and chooses from this platform's current routable IP pool locally.
+		_, err := r.RouteRequest(p.Name, account, "")
+		return err
 	}
 
 	h, err := node.ParseHex(ml.NodeHash)
@@ -591,7 +647,7 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	}
 
 	eventType := LeaseCreate
-	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if loaded {
 			state.Leases.stats.Dec(current.EgressIP)
 			eventType = LeaseReplace
@@ -620,6 +676,16 @@ func (r *Router) SnapshotIPLoad(platformID string) map[netip.Addr]int64 {
 	return state.IPLoadStats.Snapshot()
 }
 
+// LeaseIPCount returns the best-effort active lease count for an IP across all
+// platforms. It reads per-IP atomic counters and never walks account leases.
+// Expired entries are removed by the bounded lease sweeper.
+func (r *Router) LeaseIPCount(ip netip.Addr) int64 {
+	if !ip.IsValid() {
+		return 0
+	}
+	return r.globalIPStats.Get(ip.Unmap())
+}
+
 // RestoreLeases restores leases from persistence during bootstrap.
 func (r *Router) RestoreLeases(leases []model.Lease) {
 	for _, ml := range leases {
@@ -633,7 +699,7 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 		}
 
 		state, _ := r.states.LoadOrCompute(ml.PlatformID, func() (*PlatformRoutingState, bool) {
-			return NewPlatformRoutingState(), false
+			return r.newPlatformRoutingState(), false
 		})
 
 		l := Lease{
@@ -646,6 +712,16 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 		// Directly insert into table and stats
 		state.Leases.CreateLease(ml.Account, l)
 	}
+}
+
+// LeaseCount returns the current number of sticky leases without walking the
+// account map. Periodic metric collection uses this constant-time count.
+func (r *Router) LeaseCount(platformID string) int {
+	state, ok := r.states.Load(platformID)
+	if !ok {
+		return 0
+	}
+	return state.Leases.Size()
 }
 
 // RangeLeases iterates over all leases for a platform.
