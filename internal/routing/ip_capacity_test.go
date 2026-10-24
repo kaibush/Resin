@@ -83,8 +83,10 @@ func TestStickyIPReservationBalancesBeforeVerificationAndDoesNotHoldGlobalLock(t
 	plat.IPGovernanceEnabled = true
 	plat.IPGovernanceMaxAccountsPerIP = 1
 	pool.addPlatform(plat)
-	_, entryA := newRoutableEntry(t, `{"id":"capacity-concurrent-a"}`, "203.0.113.10")
-	_, entryB := newRoutableEntry(t, `{"id":"capacity-concurrent-b"}`, "203.0.113.11")
+	hashA, entryA := newRoutableEntry(t, `{"id":"capacity-concurrent-a"}`, "203.0.113.10")
+	hashB, entryB := newRoutableEntry(t, `{"id":"capacity-concurrent-b"}`, "203.0.113.11")
+	pool.addEntry(hashA, entryA)
+	pool.addEntry(hashB, entryB)
 	pool.rebuildPlatformView(plat)
 
 	verifiedIPs := make(chan netip.Addr, 2)
@@ -111,7 +113,14 @@ func TestStickyIPReservationBalancesBeforeVerificationAndDoesNotHoldGlobalLock(t
 		_, err := router.RouteRequest(plat.Name, "account-a", "")
 		results <- err
 	}()
-	firstIP := <-verifiedIPs
+	var firstIP netip.Addr
+	select {
+	case firstIP = <-verifiedIPs:
+	case err := <-results:
+		t.Fatalf("first allocation failed before verification: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("first sticky allocation did not reach node verification")
+	}
 	go func() {
 		_, err := router.RouteRequest(plat.Name, "account-b", "")
 		results <- err
@@ -120,6 +129,8 @@ func TestStickyIPReservationBalancesBeforeVerificationAndDoesNotHoldGlobalLock(t
 	var secondIP netip.Addr
 	select {
 	case secondIP = <-verifiedIPs:
+	case err := <-results:
+		t.Fatalf("second allocation failed before verification: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("second sticky allocation waited for the first node verification")
 	}
