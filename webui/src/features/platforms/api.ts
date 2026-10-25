@@ -1,5 +1,7 @@
 import { apiRequest } from "../../lib/api-client";
 import type {
+  IPHistoryPage,
+  ListIPHistoryInput,
   ListPlatformLeasesInput,
   PageResponse,
   Platform,
@@ -9,6 +11,16 @@ import type {
 } from "./types";
 
 const basePath = "/api/v1/platforms";
+
+export function listPlatformIPHistory(id: string, input: ListIPHistoryInput): Promise<IPHistoryPage> {
+  const query = new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)]));
+  return apiRequest<IPHistoryPage>(`${basePath}/${id}/ip-history?${query.toString()}`);
+}
+
+export function resetPlatformIPHistory(id: string, ip: string): Promise<void> {
+  const query = new URLSearchParams({ egress_ip: ip });
+  return apiRequest<void>(`${basePath}/${id}/ip-history?${query.toString()}`, { method: "DELETE" });
+}
 
 type ApiPlatform = Omit<Platform, "regex_filters" | "region_filters"> & {
   regex_filters?: string[] | null;

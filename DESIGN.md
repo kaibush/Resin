@@ -1243,7 +1243,7 @@ Body：
 * `region_filters`：每项为 ISO 3166-1 alpha-2 小写代码。
 * 枚举字段：`reverse_proxy_miss_action` 仅 `TREAT_AS_EMPTY|REJECT`；`reverse_proxy_empty_account_behavior` 仅 `RANDOM|FIXED_HEADER|ACCOUNT_HEADER_RULE`；`allocation_policy` 仅 `BALANCED|PREFER_LOW_LATENCY|PREFER_IDLE_IP`。
 * 新建粘性身份始终按当前平台视图中的唯一出口 IP 统计活跃租约数，并优先落到租约较少的 IP；同一出口 IP 下的多个节点不增加该 IP 的权重。已有有效粘性绑定保持不变。`allocation_policy` 继续控制无粘性请求和所选 IP 内的节点选择。
-* `ip_governance_enabled`：是否对新建粘性身份应用本地 IP 软门限；默认 `false`。`ip_governance_max_accounts_per_ip`：每个出口 IP 的活跃账号软门限，范围 `0`～`100000`，默认 `3`；`0` 表示不设门限。低于门限的 IP 优先；池内所有 IP 达到门限时仍选择活跃租约数最少者，不拒绝请求。活跃数按不同粘性账号的租约增减，不是历史累计数。
+* `ip_governance_enabled`：是否记录并启用历史不同账号数 IP 均衡；默认 `false`，关闭时恢复平台原策略并保留历史。`ip_governance_max_accounts_per_ip`：每个出口 IP 的历史不同账号软门限，范围 `0`～`100000`，默认 `3`；`0` 表示不设门限。按当前可路由池的唯一出口 IP 比较跨平台历史计数；低于门限者优先，全部达门限时仍选历史账号最少者，不拒绝请求。同一 IP/粘性标记组合仅计一次，租约到期不减数，历史独立持久化。前端及接口详见 [历史 IP 均衡](doc/ip-governance.md)。
 * `passive_circuit_breaker_disabled`：布尔值。设为 `true` 后，此 Platform 的用户代理请求失败不会增加节点熔断计数；主动探测不受影响。成功请求仍会清除节点连续失败计数并可恢复熔断节点。
 * 组合约束：当 `reverse_proxy_empty_account_behavior=FIXED_HEADER` 时，`reverse_proxy_fixed_account_header` 必填；其值支持多行，每行一个合法 HTTP Header 字段名（会按顺序尝试提取）。
 

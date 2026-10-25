@@ -47,9 +47,10 @@ import {
 } from "./formModel";
 import { PlatformAccessPanel } from "./PlatformAccessPanel";
 import { PlatformMonitorPanel } from "./PlatformMonitorPanel";
+import { PlatformIPHistoryPanel } from "./PlatformIPHistoryPanel";
 import type { PlatformLease } from "./types";
 
-type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
+type PlatformDetailTab = "monitor" | "ip-history" | "access" | "config" | "ops";
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const LEASE_MANAGEMENT_ANCHOR = "platform-lease-management";
@@ -57,6 +58,7 @@ const LEASE_SEARCH_DEBOUNCE_MS = 300;
 const LEASE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 const DETAIL_TABS: Array<{ key: PlatformDetailTab; label: string; hint: string }> = [
   { key: "monitor", label: "监控", hint: "平台运行态趋势和快照" },
+  { key: "ip-history", label: "IP 使用", hint: "每个出口 IP 的历史账号数与软门限" },
   { key: "access", label: "接入", hint: "复制正向/反向代理地址" },
   { key: "config", label: "配置", hint: "过滤规则与分配策略" },
   { key: "ops", label: "运维", hint: "重置、清租约、删除操作" },
@@ -161,6 +163,8 @@ export function PlatformDetailPage() {
     const tab = new URLSearchParams(location.search).get("tab");
     if (tab === "ops" || location.hash === `#${LEASE_MANAGEMENT_ANCHOR}`) {
       setActiveTab("ops");
+    } else if (tab === "ip-history") {
+      setActiveTab("ip-history");
     }
   }, [location.hash, location.search]);
 
@@ -513,6 +517,12 @@ export function PlatformDetailPage() {
               </div>
             ) : null}
 
+            {activeTab === "ip-history" ? (
+              <div id="platform-tabpanel-ip-history" role="tabpanel" aria-labelledby="platform-tab-ip-history" className="platform-detail-tabpanel">
+                <PlatformIPHistoryPanel key={platform.id} platform={platform} onConfigure={() => setActiveTab("config")} />
+              </div>
+            ) : null}
+
             {activeTab === "access" ? (
               <div
                 id="platform-tabpanel-access"
@@ -586,7 +596,7 @@ export function PlatformDetailPage() {
                         </option>
                       ))}
                     </Select>
-                    <p className="muted">{t("新建粘性身份始终按唯一出口 IP 的活跃租约数均衡；此策略控制无粘性请求及所选 IP 内的节点选择。同一 IP 下的多个节点按一个 IP 统计，已有有效绑定保持不变。")}</p>
+                    <p className="muted">{t("关闭历史均衡时，所有请求按此策略选择节点。开启后，新粘性绑定优先选择历史不同账号数较少的 IP，再按此策略选择同一 IP 下的节点；有效绑定保持不变。")}</p>
                   </div>
 
                   <div className="field-group field-span-2">
@@ -598,12 +608,12 @@ export function PlatformDetailPage() {
                   <div className="field-group">
  <label className="field-label" htmlFor="detail-edit-ip-governance">{t("IP 治理")}</label>
  <div className="subscription-switch-item">
- <label className="subscription-switch-label" htmlFor="detail-edit-ip-governance">{t("启用 Resin 本地 IP 软门限")}</label>
+ <label className="subscription-switch-label" htmlFor="detail-edit-ip-governance">{t("启用历史账号 IP 均衡")}</label>
  <Switch id="detail-edit-ip-governance" {...editForm.register("ip_governance_enabled")} />
  </div>
- <label className="field-label" htmlFor="detail-edit-ip-governance-limit">{t("每个出口 IP 的活跃账号软门限")}</label>
+ <label className="field-label" htmlFor="detail-edit-ip-governance-limit">{t("每个出口 IP 的历史账号软门限")}</label>
  <Input id="detail-edit-ip-governance-limit" type="number" min={0} max={100000} step={1} {...editForm.register("ip_governance_max_accounts_per_ip", { valueAsNumber: true })} />
- <p className="muted">{t("新粘性账号优先分到活跃租约数低于门限的唯一出口 IP；多个节点共用同一出口 IP 时合并计数。所有候选都达到门限时，仍选择当前负载最低的 IP 继续代理。设为 0 表示不启用门限；账号有效租约保持粘性，租约到期后重新均衡。")}</p>
+ <p className="muted">{t("仅开启后记录并按历史不同账号数均衡。同一标记再次使用同一 IP 不重复计数，租约到期不减数，跨平台同一出口合并统计。全部达到门限时仍选择历史账号最少的 IP；0 表示不设门限。关闭后保留历史，恢复平台原分配策略。")}</p>
  </div>
  <div className="field-group">
                     <label className="field-label" htmlFor="detail-edit-passive-circuit-breaker" style={{ visibility: "hidden" }}>

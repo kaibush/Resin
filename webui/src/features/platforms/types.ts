@@ -71,6 +71,35 @@ export type PlatformLease = {
 export type PlatformLeaseSortBy = "account" | "expiry" | "last_accessed";
 export type SortOrder = "asc" | "desc";
 
+export type PlatformIPHistory = {
+  egress_ip: string;
+  historical_accounts: number;
+  active_accounts: number;
+  node_count: number;
+  threshold_status: "disabled" | "unlimited" | "below" | "reached";
+};
+
+export type IPHistoryPage = PageResponse<PlatformIPHistory> & {
+  summary: {
+    available_ips: number;
+    used_ips: number;
+    unused_ips: number;
+    active_ips: number;
+    reached_ips: number;
+    enabled: boolean;
+    soft_limit: number;
+  };
+};
+
+export type ListIPHistoryInput = {
+  limit: number;
+  offset: number;
+  egress_ip: string;
+  status: "" | "unused" | "reached";
+  sort_by: "historical_accounts" | "active_accounts" | "egress_ip";
+  sort_order: SortOrder;
+};
+
 export type ListPlatformLeasesInput = {
   limit?: number;
   offset?: number;

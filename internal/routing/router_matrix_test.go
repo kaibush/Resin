@@ -23,6 +23,7 @@ func TestStickyLeasesBalanceAcrossUniqueIPs(t *testing.T) {
 		t.Run(string(policy), func(t *testing.T) {
 			pool := newRouterTestPool()
 			plat := platform.NewPlatform("balanced", "Balanced", nil, nil)
+			plat.IPGovernanceEnabled = true
 			plat.AllocationPolicy = policy
 			pool.addPlatform(plat)
 

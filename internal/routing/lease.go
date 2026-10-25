@@ -138,6 +138,7 @@ type IPLoadStats struct {
 	reservations        *xsync.Map[netip.Addr, *atomic.Int64]
 	global              *IPLoadStats
 	loadAcrossPlatforms func(netip.Addr) int64
+	historyLoad         func(netip.Addr) int64
 	allocationMu        sync.Mutex
 	candidateMu         sync.Mutex
 	candidates          ipRouteSnapshot
@@ -272,14 +273,16 @@ func (s *IPLoadStats) Get(ip netip.Addr) int64 {
 // yet become sticky leases. This prevents concurrent allocations from all
 // observing the same empty-IP snapshot.
 func (s *IPLoadStats) GetForAllocation(ip netip.Addr) int64 {
-	load := s.Get(ip)
-	if !ip.IsValid() {
-		return load
+	return s.Get(ip) + s.Reserved(ip)
+}
+
+func (s *IPLoadStats) Reserved(ip netip.Addr) int64 {
+	if ip.IsValid() {
+		if ctr, ok := s.reservations.Load(ip.Unmap()); ok {
+			return ctr.Load()
+		}
 	}
-	if ctr, ok := s.reservations.Load(ip.Unmap()); ok {
-		load += ctr.Load()
-	}
-	return load
+	return 0
 }
 
 func (s *IPLoadStats) allocationLoad(ip netip.Addr) int64 {

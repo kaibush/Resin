@@ -34,6 +34,7 @@ type Router struct {
 	pool            PoolAccessor
 	states          *xsync.Map[string, *PlatformRoutingState]
 	globalIPStats   *IPLoadStats
+	ipHistory       *ipHistory
 	allocationMu    sync.Mutex // serializes short cross-platform IP reservations
 	authorities     func() []string
 	p2cWindow       func() time.Duration
@@ -42,11 +43,13 @@ type Router struct {
 }
 
 type RouterConfig struct {
-	PrepareRoute func(*platform.Platform, node.Hash) error
-	VerifyNode   func(*platform.Platform, node.Hash) error
-	Pool         PoolAccessor
-	Authorities  func() []string
-	P2CWindow    func() time.Duration
+	SaveIPHistory   func([]model.IPHistory) error
+	DeleteIPHistory func(string) error
+	PrepareRoute    func(*platform.Platform, node.Hash) error
+	VerifyNode      func(*platform.Platform, node.Hash) error
+	Pool            PoolAccessor
+	Authorities     func() []string
+	P2CWindow       func() time.Duration
 	// OnLeaseEvent is called synchronously; handlers must stay lightweight.
 	OnLeaseEvent LeaseEventFunc
 	// NodeTagResolver resolves a node hash to its display tag ("<Sub>/<Tag>").
@@ -55,7 +58,7 @@ type RouterConfig struct {
 }
 
 func NewRouter(cfg RouterConfig) *Router {
-	return &Router{
+	r := &Router{
 		prepareRoute:    cfg.PrepareRoute,
 		verifyNode:      cfg.VerifyNode,
 		pool:            cfg.Pool,
@@ -66,6 +69,8 @@ func NewRouter(cfg RouterConfig) *Router {
 		onLeaseEvent:    cfg.OnLeaseEvent,
 		nodeTagResolver: cfg.NodeTagResolver,
 	}
+	r.ipHistory = newIPHistory(cfg.SaveIPHistory, cfg.DeleteIPHistory, &r.allocationMu)
+	return r
 }
 
 type RouteResult struct {
@@ -143,6 +148,7 @@ func (r *Router) newPlatformRoutingState() *PlatformRoutingState {
 	state := NewPlatformRoutingState()
 	state.IPLoadStats.global = r.globalIPStats
 	state.IPLoadStats.loadAcrossPlatforms = r.globalIPStats.GetForAllocation
+	state.IPLoadStats.historyLoad = r.ipHistory.counts.GetForAllocation
 	return state
 }
 
@@ -233,9 +239,19 @@ func (r *Router) decideStickyLease(
 
 	if loaded {
 		if newLease, hitResult, ok := r.tryLeaseHit(plat, account, current, nowNs); ok {
+			if plat.IPGovernanceEnabled {
+				if err := r.ipHistory.record(account, newLease.EgressIP, nil); err != nil {
+					return current, xsync.CancelOp, RouteResult{}, err
+				}
+			}
 			return newLease, xsync.UpdateOp, hitResult, nil
 		}
 		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, account, current, targetDomain, nowNs); ok {
+			if plat.IPGovernanceEnabled {
+				if err := r.ipHistory.record(account, newLease.EgressIP, nil); err != nil {
+					return current, xsync.CancelOp, RouteResult{}, err
+				}
+			}
 			return newLease, xsync.UpdateOp, rotatedResult, nil
 		}
 		invalidation = leaseInvalidationRemove
@@ -273,6 +289,15 @@ func (r *Router) createOrAbortStickyLease(
 		retireIP = previous.EgressIP
 	}
 	newLease, createdResult, err := r.createLease(plat, state, targetDomain, now, nowNs, retireIP)
+	if err == nil && plat.IPGovernanceEnabled {
+		err = r.ipHistory.record(account, newLease.EgressIP, func() {
+			state.IPLoadStats.CommitReservation(newLease.EgressIP)
+			r.ipHistory.counts.Unreserve(newLease.EgressIP)
+		})
+		if err != nil {
+			r.releaseSelectionReservation(state.IPLoadStats, newLease.EgressIP, true)
+		}
+	}
 	if err != nil {
 		r.cleanupPreviousLease(previous, hadPreviousLease, invalidation, plat.ID, account)
 		lease, op := abortLeaseCreate(previous, hadPreviousLease)
@@ -280,7 +305,9 @@ func (r *Router) createOrAbortStickyLease(
 	}
 
 	r.cleanupPreviousLease(previous, hadPreviousLease, invalidation, plat.ID, account)
-	state.IPLoadStats.CommitReservation(newLease.EgressIP)
+	if !plat.IPGovernanceEnabled {
+		state.IPLoadStats.CommitReservation(newLease.EgressIP)
+	}
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseCreate,
 		PlatformID: plat.ID,
@@ -449,17 +476,17 @@ func (r *Router) selectLiveRandomRoute(
 	retireIP netip.Addr,
 ) (node.Hash, *node.NodeEntry, error) {
 	var lastMissing node.Hash
-	if reserveLease || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
+	reserveHistory := reserveLease && plat.IPGovernanceEnabled
+	if reserveHistory || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
 		// A cold pool snapshot can range over all routable nodes. Build it before
 		// taking the allocator mutex so one initial request does not hold up all
 		// concurrent sticky allocations while it groups unique IPs.
 		stats.candidateNodes(plat.View(), r.pool)
 	}
 	for i := 0; i < livePickAttempts; i++ {
-		// Sticky identities are assigned by current unique-IP load, regardless
-		// of the platform's node scoring policy. Random requests keep the
-		// configured platform policy.
-		balanceIPs := reserveLease || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP
+		// Historical balancing is opt-in. Disabled platforms keep their
+		// configured node policy, including PREFER_IDLE_IP when selected.
+		balanceIPs := reserveHistory || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP
 		reserve := reserveLease
 		if reserve {
 			r.allocationMu.Lock()
@@ -483,20 +510,23 @@ func (r *Router) selectLiveRandomRoute(
 			if reserve {
 				stats.Reserve(selectedIP)
 				r.globalIPStats.Reserve(selectedIP)
+				if reserveHistory {
+					r.ipHistory.counts.Reserve(selectedIP)
+				}
 				stats.allocationMu.Unlock()
 				r.allocationMu.Unlock()
 			}
 			if balanceIPs && (!selectedIP.IsValid() || !plat.View().Contains(h)) {
 				stats.InvalidateCandidateSnapshot()
 				if reserve {
-					r.releaseSelectionReservation(stats, selectedIP)
+					r.releaseSelectionReservation(stats, selectedIP, reserveHistory)
 				}
 				continue
 			}
 			if r.verifyNode != nil {
 				if err := r.verifyNode(plat, h); err != nil {
 					if reserve {
-						r.releaseSelectionReservation(stats, selectedIP)
+						r.releaseSelectionReservation(stats, selectedIP, reserveHistory)
 					}
 					return node.Zero, nil, err
 				}
@@ -507,7 +537,7 @@ func (r *Router) selectLiveRandomRoute(
 					stats.InvalidateCandidateSnapshot()
 				}
 				if reserve {
-					r.releaseSelectionReservation(stats, selectedIP)
+					r.releaseSelectionReservation(stats, selectedIP, reserveHistory)
 				}
 				continue
 			}
@@ -525,9 +555,12 @@ func (r *Router) selectLiveRandomRoute(
 	return node.Zero, nil, ErrNoAvailableNodes
 }
 
-func (r *Router) releaseSelectionReservation(stats *IPLoadStats, ip netip.Addr) {
+func (r *Router) releaseSelectionReservation(stats *IPLoadStats, ip netip.Addr, history bool) {
 	stats.ReleaseReservation(ip)
 	r.globalIPStats.ReleaseReservation(ip)
+	if history {
+		r.ipHistory.counts.ReleaseReservation(ip)
+	}
 }
 
 func chooseSameIPRotationCandidate(

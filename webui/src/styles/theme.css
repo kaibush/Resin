@@ -2752,6 +2752,28 @@ a {
   gap: 10px;
 }
 
+.platform-ip-history {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.platform-ip-history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-ip-history-toolbar .search-box {
+  flex: 1 1 200px;
+}
+
+.platform-ip-history-toolbar > .select {
+  width: auto;
+  max-width: 100%;
+}
+
 .platform-monitor-kpi-card {
   margin: 0;
   padding: 12px;

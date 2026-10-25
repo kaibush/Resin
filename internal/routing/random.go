@@ -21,7 +21,7 @@ var randomRouteRNGPool = sync.Pool{
 
 // randomRoute selects a routable node using P2C with latency/load scoring.
 // It intentionally trusts Platform.View as the routable source of truth and
-// does not scan the pool on the ordinary hot path. Sticky lease creation and
+// does not scan the pool on the ordinary hot path. Governed lease creation and
 // PREFER_IDLE_IP use a cached per-view IP grouping rebuilt only after routable
 // membership or an egress IP changes.
 // Post-pick race handling (node removed right after selection) is handled by
@@ -43,12 +43,18 @@ func randomRoute(
 
 	rng := randomRouteRNGPool.Get().(*rand.Rand)
 	defer randomRouteRNGPool.Put(rng)
-	if balanceStickyIP || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
+	governed := balanceStickyIP && plat.IPGovernanceEnabled
+	if governed || plat.AllocationPolicy == platform.AllocationPolicyPreferIdleIP {
 		maxAccountsPerIP := int64(0)
-		if balanceStickyIP && plat.IPGovernanceEnabled {
+		load := stats.allocationLoad
+		if governed {
 			maxAccountsPerIP = int64(plat.IPGovernanceMaxAccountsPerIP)
+			load = stats.Reserved
+			if stats.historyLoad != nil {
+				load = stats.historyLoad
+			}
 		}
-		return leastLoadedIPRoute(view, stats, pool, rng, plat, targetDomain, authorities, p2cWindow, maxAccountsPerIP)
+		return leastLoadedIPRoute(view, stats, pool, rng, plat, targetDomain, authorities, p2cWindow, maxAccountsPerIP, load)
 	}
 
 	pick := func() (node.Hash, bool) {
@@ -115,6 +121,7 @@ func leastLoadedIPRoute(
 	authorities []string,
 	p2cWindow time.Duration,
 	maxAccountsPerIP int64,
+	loadForIP func(netip.Addr) int64,
 ) (node.Hash, error) {
 	byIP := stats.candidateNodes(view, pool)
 	if len(byIP) == 0 {
@@ -123,38 +130,43 @@ func leastLoadedIPRoute(
 
 	leastBelowCeiling := int64(^uint64(0) >> 1)
 	leastOverall := int64(^uint64(0) >> 1)
-	ipsBelowCeiling := make([]netip.Addr, 0, len(byIP))
-	ipsOverall := make([]netip.Addr, 0, len(byIP))
+	var belowIP, overallIP netip.Addr
+	belowTies, overallTies := 0, 0
 	for ip := range byIP {
-		load := stats.allocationLoad(ip)
+		load := loadForIP(ip)
 		if load < 0 {
 			load = 0
 		}
 		if load < leastOverall {
 			leastOverall = load
-			ipsOverall = ipsOverall[:0]
+			overallTies = 0
 		}
 		if load == leastOverall {
-			ipsOverall = append(ipsOverall, ip)
+			overallTies++
+			if rng.IntN(overallTies) == 0 {
+				overallIP = ip
+			}
 		}
 		if maxAccountsPerIP > 0 && load >= maxAccountsPerIP {
 			continue
 		}
 		if load < leastBelowCeiling {
 			leastBelowCeiling = load
-			ipsBelowCeiling = ipsBelowCeiling[:0]
+			belowTies = 0
 		}
 		if load == leastBelowCeiling {
-			ipsBelowCeiling = append(ipsBelowCeiling, ip)
+			belowTies++
+			if rng.IntN(belowTies) == 0 {
+				belowIP = ip
+			}
 		}
 	}
-	ips := ipsBelowCeiling
-	if len(ips) == 0 {
+	selectedIP := belowIP
+	if !selectedIP.IsValid() {
 		// A soft ceiling never blocks a healthy proxy pool. Once every unique IP
 		// has reached its ceiling, continue on the least-loaded IP.
-		ips = ipsOverall
+		selectedIP = overallIP
 	}
-	selectedIP := ips[rng.IntN(len(ips))]
 	nodes := byIP[selectedIP]
 	return bestNodeWithinIP(nodes, plat, stats, pool, targetDomain, authorities, p2cWindow, rng), nil
 }

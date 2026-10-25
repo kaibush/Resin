@@ -33,6 +33,16 @@ func TestSoftIPCeilingUsesLeastLoadedCapacityAcrossPlatforms(t *testing.T) {
 	otherPlatform.Leases.CreateLease("other-2", Lease{EgressIP: entryA.GetEgressIP(), ExpiryNs: time.Now().Add(time.Hour).UnixNano()})
 	localPlatform := router.ensurePlatformState(platformA.ID)
 	localPlatform.Leases.CreateLease("local-1", Lease{EgressIP: entryB.GetEgressIP(), ExpiryNs: time.Now().Add(time.Hour).UnixNano()})
+	for _, seed := range []struct {
+		account string
+		ip      netip.Addr
+	}{
+		{"other-1", entryA.GetEgressIP()}, {"other-2", entryA.GetEgressIP()}, {"local-1", entryB.GetEgressIP()},
+	} {
+		if err := router.ipHistory.record(seed.account, seed.ip, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	result, err := router.RouteRequest(platformA.Name, "new-account", "https://example.com")
 	if err != nil {
@@ -62,6 +72,9 @@ func TestSoftIPCeilingFallsBackToLeastLoadedWhenEveryIPIsFull(t *testing.T) {
 	pool.rebuildPlatformView(plat)
 
 	stats := NewIPLoadStats()
+	// This unit fixture supplies historical counts through the same callback
+	// used by Router; active leases are tested separately in ip_history_test.go.
+	stats.historyLoad = stats.GetForAllocation
 	stats.Inc(entryA.GetEgressIP())
 	stats.Inc(entryA.GetEgressIP())
 	stats.Inc(entryB.GetEgressIP())
@@ -95,9 +108,9 @@ func TestStickyIPReservationBalancesBeforeVerificationAndDoesNotHoldGlobalLock(t
 	release := func() { releaseOnce.Do(func() { close(releaseVerification) }) }
 	defer release()
 	router := NewRouter(RouterConfig{
-		Pool:         pool,
-		Authorities:  func() []string { return nil },
-		P2CWindow:    func() time.Duration { return time.Minute },
+		Pool:        pool,
+		Authorities: func() []string { return nil },
+		P2CWindow:   func() time.Duration { return time.Minute },
 		VerifyNode: func(_ *platform.Platform, hash node.Hash) error {
 			entry, ok := pool.GetEntry(hash)
 			if !ok {

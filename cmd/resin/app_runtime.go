@@ -153,9 +153,11 @@ func (a *resinApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.Retr
 	// Phase 4: OutboundManager and Router (now that pool exists).
 	log.Println("OutboundManager initialized with lifecycle callbacks")
 	a.topoRuntime.router = routing.NewRouter(routing.RouterConfig{
-		Pool:         a.topoRuntime.pool,
-		PrepareRoute: a.topoRuntime.probeMgr.PrepareRoute,
-		VerifyNode:   a.topoRuntime.probeMgr.VerifyPlatformNode,
+		SaveIPHistory:   engine.SaveIPHistory,
+		DeleteIPHistory: engine.DeleteIPHistory,
+		Pool:            a.topoRuntime.pool,
+		PrepareRoute:    a.topoRuntime.probeMgr.PrepareRoute,
+		VerifyNode:      a.topoRuntime.probeMgr.VerifyPlatformNode,
 		Authorities: func() []string {
 			return runtimeConfigSnapshot(a.runtimeCfg).LatencyAuthorities
 		},
@@ -262,6 +264,16 @@ func (a *resinApp) bootstrapFromPersistence(engine *state.StateEngine) error {
 	a.topoRuntime.pool.RebuildAllPlatforms()
 	log.Println("Platform rebuild complete")
 
+	history, err := engine.LoadIPHistory()
+	if err != nil {
+		return fmt.Errorf("load IP history: %w", err)
+	}
+	a.topoRuntime.router.RestoreIPHistory(history)
+	historyInitialized, err := engine.IPHistoryInitialized()
+	if err != nil {
+		return fmt.Errorf("load IP history bootstrap: %w", err)
+	}
+
 	// Phase 9: Restore leases (AFTER rebuild so platform views are populated).
 	leases, err := engine.LoadAllLeases()
 	if err != nil {
@@ -269,6 +281,17 @@ func (a *resinApp) bootstrapFromPersistence(engine *state.StateEngine) error {
 	} else if len(leases) > 0 {
 		a.topoRuntime.router.RestoreLeases(leases)
 		log.Printf("Restored %d leases from cache.db", len(leases))
+	}
+	if !historyInitialized {
+		if err != nil {
+			return fmt.Errorf("seed IP history: load leases: %w", err)
+		}
+		if err := a.topoRuntime.router.SeedIPHistory(leases); err != nil {
+			return fmt.Errorf("seed IP history: %w", err)
+		}
+		if err := engine.MarkIPHistoryInitialized(); err != nil {
+			return fmt.Errorf("mark IP history bootstrap: %w", err)
+		}
 	}
 
 	flushReaders := newFlushReaders(a.topoRuntime.pool, a.topoRuntime.subManager, a.topoRuntime.router)

@@ -104,7 +104,7 @@ func (p *routerTestPool) rebuildPlatformView(plat *platform.Platform) {
 	)
 }
 
-func newRoutableEntry(t *testing.T, raw, ip string) (node.Hash, *node.NodeEntry) {
+func newRoutableEntry(t testing.TB, raw, ip string) (node.Hash, *node.NodeEntry) {
 	t.Helper()
 	rawOpts := json.RawMessage(raw)
 	h := node.HashFromRawOptions(rawOpts)
@@ -129,7 +129,7 @@ func newRoutableEntry(t *testing.T, raw, ip string) (node.Hash, *node.NodeEntry)
 	return h, e
 }
 
-func waitForDomainLatency(t *testing.T, e *node.NodeEntry, domain string) {
+func waitForDomainLatency(t testing.TB, e *node.NodeEntry, domain string) {
 	t.Helper()
 	deadline := time.Now().Add(250 * time.Millisecond)
 	for time.Now().Before(deadline) {

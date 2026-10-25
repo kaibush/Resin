@@ -1,8 +1,8 @@
 package routing
 
 // governsPlatform reports whether the platform opted into Resin's local
-// per-IP sticky-lease ceiling. Allocation uses Resin's in-memory lease
-// counters; it does not call back into grok2api.
+// per-IP historical-account balancing. Allocation uses Resin's in-memory
+// historical counters; it does not call back into grok2api.
 func (r *Router) governsPlatform(id string) bool {
 	if r == nil || r.pool == nil {
 		return false

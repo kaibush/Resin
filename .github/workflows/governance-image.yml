@@ -26,6 +26,7 @@ jobs:
       - run: npm run build
         working-directory: webui
       - run: go test ./...
+      - run: go test -race ./internal/routing
 
   image:
     needs: test
