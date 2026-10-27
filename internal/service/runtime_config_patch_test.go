@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Resinat/Resin/internal/config"
+	"github.com/Resinat/Resin/internal/probe"
 	"github.com/Resinat/Resin/internal/proxy"
 	"github.com/Resinat/Resin/internal/state"
 )
@@ -438,5 +439,53 @@ func TestProbeRetryConfigPatch(t *testing.T) {
 	}
 	if err := parseRuntimeConfigPatch([]byte(`{"probe_failure_retry_enabled":null}`), cfg); err == nil {
 		t.Fatal("null must be rejected")
+	}
+}
+
+func TestPatchRuntimeConfig_ProbeSettings(t *testing.T) {
+	h := newPatchHarness(t)
+	mgr := probe.NewProbeManager(probe.ProbeConfig{Concurrency: 1})
+	h.cp.ProbeMgr = mgr
+
+	updated, err := h.cp.PatchRuntimeConfig([]byte(`{"probe_concurrency":3,"probe_timeout":"20s"}`))
+	if err != nil {
+		t.Fatalf("patch probe settings: %v", err)
+	}
+	if updated.ProbeConcurrency != 3 || time.Duration(updated.ProbeTimeout) != 20*time.Second {
+		t.Fatalf("updated probe settings: concurrency=%d timeout=%s", updated.ProbeConcurrency, time.Duration(updated.ProbeTimeout))
+	}
+	if mgr.Concurrency() != 3 {
+		t.Fatalf("worker target: got %d, want 3", mgr.Concurrency())
+	}
+	loaded, _, err := h.engine.GetSystemConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ProbeConcurrency != 3 || time.Duration(loaded.ProbeTimeout) != 20*time.Second {
+		t.Fatalf("persisted probe settings: concurrency=%d timeout=%s", loaded.ProbeConcurrency, time.Duration(loaded.ProbeTimeout))
+	}
+
+	if _, err := h.cp.PatchRuntimeConfig([]byte(`{"probe_concurrency":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if mgr.Concurrency() != 1 {
+		t.Fatalf("worker target after shrink: got %d, want 1", mgr.Concurrency())
+	}
+
+	for _, body := range []string{
+		`{"probe_concurrency":0}`,
+		`{"probe_concurrency":10001}`,
+		`{"probe_timeout":"0s"}`,
+		`{"probe_timeout":"2m1s"}`,
+	} {
+		if _, err := h.cp.PatchRuntimeConfig([]byte(body)); err == nil {
+			t.Fatalf("expected error for %s", body)
+		}
+	}
+	if mgr.Concurrency() != 1 {
+		t.Fatalf("invalid patch changed concurrency to %d", mgr.Concurrency())
+	}
+	if _, err := h.cp.PatchRuntimeConfig([]byte(`{"probe_timeout":"2m"}`)); err != nil {
+		t.Fatalf("2m timeout should be accepted: %v", err)
 	}
 }

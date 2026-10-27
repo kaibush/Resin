@@ -18,6 +18,12 @@ func TestNewDefaultRuntimeConfig(t *testing.T) {
 	if cfg.CacheFlushDirtyThreshold != 1000 {
 		t.Errorf("CacheFlushDirtyThreshold: got %d, want 1000", cfg.CacheFlushDirtyThreshold)
 	}
+	if cfg.ProbeConcurrency != DefaultProbeConcurrency {
+		t.Errorf("ProbeConcurrency: got %d, want %d", cfg.ProbeConcurrency, DefaultProbeConcurrency)
+	}
+	if time.Duration(cfg.ProbeTimeout) != DefaultProbeTimeout {
+		t.Errorf("ProbeTimeout: got %s, want %s", time.Duration(cfg.ProbeTimeout), DefaultProbeTimeout)
+	}
 	if len(cfg.LatencyAuthorities) != 4 {
 		t.Errorf("LatencyAuthorities: got %d items, want 4", len(cfg.LatencyAuthorities))
 	}
@@ -105,11 +111,43 @@ func TestRuntimeConfig_JSONFieldNames(t *testing.T) {
 		"latency_decay_window",
 		"cache_flush_interval",
 		"cache_flush_dirty_threshold",
+		"probe_concurrency",
+		"probe_timeout",
 	}
 
 	for _, key := range expectedKeys {
 		if _, ok := m[key]; !ok {
 			t.Errorf("missing JSON key: %q", key)
 		}
+	}
+}
+
+func TestApplyMissingProbeSettings(t *testing.T) {
+	cfg := NewDefaultRuntimeConfig()
+	if ApplyMissingProbeSettings(cfg, nil, 32, 20*time.Second) {
+		t.Fatal("in-range env values should not clamp")
+	}
+	if cfg.ProbeConcurrency != 32 || time.Duration(cfg.ProbeTimeout) != 20*time.Second {
+		t.Fatalf("missing config: concurrency=%d timeout=%s", cfg.ProbeConcurrency, time.Duration(cfg.ProbeTimeout))
+	}
+
+	persisted := NewDefaultRuntimeConfig()
+	raw := []byte(`{"probe_concurrency":4,"probe_timeout":"9s","max_consecutive_failures":7}`)
+	if err := json.Unmarshal(raw, persisted); err != nil {
+		t.Fatal(err)
+	}
+	if ApplyMissingProbeSettings(persisted, raw, 32, 3*time.Minute) {
+		t.Fatal("saved keys must not be replaced or clamped")
+	}
+	if persisted.ProbeConcurrency != 4 || time.Duration(persisted.ProbeTimeout) != 9*time.Second {
+		t.Fatalf("saved values changed: concurrency=%d timeout=%s", persisted.ProbeConcurrency, time.Duration(persisted.ProbeTimeout))
+	}
+
+	partial := NewDefaultRuntimeConfig()
+	if !ApplyMissingProbeSettings(partial, []byte(`{"max_consecutive_failures":7}`), 10001, 3*time.Minute) {
+		t.Fatal("expected out-of-range env init to clamp")
+	}
+	if partial.ProbeConcurrency != MaxProbeConcurrency || time.Duration(partial.ProbeTimeout) != MaxProbeTimeout {
+		t.Fatalf("clamped: concurrency=%d timeout=%s", partial.ProbeConcurrency, time.Duration(partial.ProbeTimeout))
 	}
 }

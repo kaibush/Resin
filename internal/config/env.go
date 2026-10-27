@@ -98,7 +98,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 
 	// --- Core ---
 	cfg.MaxLatencyTableEntries = envInt("RESIN_MAX_LATENCY_TABLE_ENTRIES", 12, &errs)
-	cfg.ProbeConcurrency = envInt("RESIN_PROBE_CONCURRENCY", 2, &errs)
+	cfg.ProbeConcurrency = envInt("RESIN_PROBE_CONCURRENCY", DefaultProbeConcurrency, &errs)
 	cfg.GeoIPUpdateSchedule = envStr("RESIN_GEOIP_UPDATE_SCHEDULE", "0 7 * * *")
 	cfg.DefaultPlatformStickyTTL = envDuration("RESIN_DEFAULT_PLATFORM_STICKY_TTL", 7*24*time.Hour, &errs)
 	cfg.DefaultPlatformRegexFilters = envStringSlice("RESIN_DEFAULT_PLATFORM_REGEX_FILTERS", []string{}, &errs)
@@ -119,7 +119,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		"RESIN_DEFAULT_PLATFORM_ALLOCATION_POLICY",
 		string(platform.AllocationPolicyBalanced),
 	)
-	cfg.ProbeTimeout = envDuration("RESIN_PROBE_TIMEOUT", 15*time.Second, &errs)
+	cfg.ProbeTimeout = envDuration("RESIN_PROBE_TIMEOUT", DefaultProbeTimeout, &errs)
 	cfg.ResourceFetchTimeout = envDuration("RESIN_RESOURCE_FETCH_TIMEOUT", 30*time.Second, &errs)
 	cfg.NodeDNSUpstreams = envStringSlice("RESIN_NODE_DNS_UPSTREAMS", DefaultNodeDNSUpstreams(), &errs)
 	cfg.ProxyTransportMaxIdleConns = envInt("RESIN_PROXY_TRANSPORT_MAX_IDLE_CONNS", 1024, &errs)
@@ -195,8 +195,8 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		errs = append(errs, "RESIN_MAX_LATENCY_TABLE_ENTRIES must be <= 32")
 	}
 	validatePositive("RESIN_PROBE_CONCURRENCY", cfg.ProbeConcurrency, &errs)
-	if cfg.ProbeConcurrency > 10000 {
-		errs = append(errs, "RESIN_PROBE_CONCURRENCY must be <= 10000")
+	if cfg.ProbeConcurrency > MaxProbeConcurrency {
+		errs = append(errs, fmt.Sprintf("RESIN_PROBE_CONCURRENCY must be <= %d", MaxProbeConcurrency))
 	}
 	if _, err := cron.ParseStandard(cfg.GeoIPUpdateSchedule); err != nil {
 		errs = append(errs, fmt.Sprintf("RESIN_GEOIP_UPDATE_SCHEDULE: invalid cron expression %q: %v", cfg.GeoIPUpdateSchedule, err))

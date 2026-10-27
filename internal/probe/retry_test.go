@@ -95,11 +95,19 @@ func TestSubscriptionAdmissionAndCooldown(t *testing.T) {
 	e, _ := pool.GetEntry(h)
 	m := NewProbeManager(ProbeConfig{Pool: pool, ProbeFailureRetryEnabled: func() bool { return true }})
 	now := time.Now()
-	if !m.admitAutomaticProbe(e, now) || m.admitAutomaticProbe(e, now.Add(999*time.Millisecond)) || !m.admitAutomaticProbe(e, now.Add(time.Second)) {
-		t.Fatal("expected one start per second")
+	if !m.admitAutomaticProbe(e, now) || !m.admitAutomaticProbe(e, now) {
+		t.Fatal("unverified nodes must not share the one-per-second steady budget")
 	}
+	e.LastEgressUpdateAttempt.Store(now.UnixNano())
+	if !m.admitAutomaticProbe(e, now) || m.admitAutomaticProbe(e, now.Add(999*time.Millisecond)) || !m.admitAutomaticProbe(e, now.Add(time.Second)) {
+		t.Fatal("probed nodes stay at one start per second")
+	}
+	e.LastEgressUpdateAttempt.Store(0)
 	err := errors.New("unexpected status: 429 Account exceeded the allowed rate limits")
 	m.noteRateLimit(h, err)
+	if m.admitAutomaticProbe(e, time.Now()) {
+		t.Fatal("cooldown must block first-pass discovery")
+	}
 	first := m.probeGroups["shared"]
 	m.noteRateLimit(h, err)
 	if m.probeGroups["shared"].strikes != first.strikes {

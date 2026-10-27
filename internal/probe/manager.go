@@ -30,7 +30,7 @@ type ProbeConfig struct {
 	Metered                  *MeteredController
 	StatsFetcher             StatsFetcher
 	Pool                     *topology.GlobalNodePool
-	Concurrency              int // number of async probe workers
+	Concurrency              int // initial number of async probe workers
 	// QueueCapacity is the per-priority async queue capacity.
 	// If <= 0, defaults to max(1024, Concurrency*4).
 	QueueCapacity int
@@ -74,6 +74,9 @@ type ProbeManager struct {
 	wg              sync.WaitGroup
 	fetcher         Fetcher
 	workerCount     int
+	workerMu        sync.Mutex
+	workerClosed    bool
+	workersStarted  bool
 	taskQueue       *probeTaskQueue
 	taskStates      *xsync.Map[probeTaskKey, *probeTaskState]
 
@@ -168,6 +171,8 @@ type probeTaskQueue struct {
 	highCap              int
 	normalCap            int
 	stopped              bool
+	workers              int
+	target               int
 	chooseNormalWhenBoth func() bool
 }
 
@@ -214,6 +219,55 @@ func (q *probeTaskQueue) Enqueue(task probeTask, priority probePriority) bool {
 	return true
 }
 
+func (q *probeTaskQueue) pop() (probeTask, probePriority, bool) {
+	highLen := q.high.len()
+	normalLen := q.normal.len()
+	switch {
+	case highLen > 0 && normalLen > 0:
+		if q.chooseNormalWhenBoth() {
+			return q.normal.pop(), probePriorityNormal, true
+		}
+		return q.high.pop(), probePriorityHigh, true
+	case highLen > 0:
+		return q.high.pop(), probePriorityHigh, true
+	case normalLen > 0:
+		return q.normal.pop(), probePriorityNormal, true
+	default:
+		return probeTask{}, probePriorityNormal, false
+	}
+}
+
+func (q *probeTaskQueue) push(task probeTask, priority probePriority) {
+	if priority == probePriorityHigh {
+		q.high.push(task)
+		return
+	}
+	q.normal.push(task)
+}
+
+func (q *probeTaskQueue) setTarget(n int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.stopped {
+		return
+	}
+	q.target = n
+	if q.workers > q.target {
+		q.notEmpty.Broadcast()
+	}
+}
+
+func (q *probeTaskQueue) reserveToTarget() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.stopped || q.target <= q.workers {
+		return 0
+	}
+	add := q.target - q.workers
+	q.workers += add
+	return add
+}
+
 func (q *probeTaskQueue) Dequeue() (probeTask, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -222,22 +276,21 @@ func (q *probeTaskQueue) Dequeue() (probeTask, bool) {
 		if q.stopped {
 			return probeTask{}, false
 		}
-
-		highLen := q.high.len()
-		normalLen := q.normal.len()
-		switch {
-		case highLen > 0 && normalLen > 0:
-			if q.chooseNormalWhenBoth() {
-				return q.normal.pop(), true
+		task, priority, ok := q.pop()
+		if q.workers > q.target {
+			// This worker is leaving. Put a task it already took back at the
+			// original priority so the queued flag still has a queue token.
+			if ok {
+				q.push(task, priority)
+				q.notEmpty.Signal()
 			}
-			return q.high.pop(), true
-		case highLen > 0:
-			return q.high.pop(), true
-		case normalLen > 0:
-			return q.normal.pop(), true
-		default:
-			q.notEmpty.Wait()
+			q.workers--
+			return probeTask{}, false
 		}
+		if ok {
+			return task, true
+		}
+		q.notEmpty.Wait()
 	}
 }
 
@@ -278,7 +331,7 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 			return b, l, err
 		}
 	}
-	return &ProbeManager{
+	mgr := &ProbeManager{
 		retryEnabled:                    cfg.ProbeFailureRetryEnabled,
 		retries:                         make(map[node.Hash]retryState),
 		probeGroups:                     make(map[string]probeGroup),
@@ -299,6 +352,8 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 		latencyAuthorities:              cfg.LatencyAuthorities,
 		onProbeEvent:                    cfg.OnProbeEvent,
 	}
+	mgr.taskQueue.target = conc
+	return mgr
 }
 
 // SetOnProbeEvent sets the probe event callback. Must be called before Start.
@@ -327,13 +382,64 @@ func (m *ProbeManager) Start() {
 		scanloop.Run(m.stopCh, scanloop.DefaultMinInterval, scanloop.DefaultJitterRange, m.scanLatency)
 	}()
 
-	for i := 0; i < m.workerCount; i++ {
+	m.startWorkers()
+}
+
+func (m *ProbeManager) startWorkers() {
+	m.workerMu.Lock()
+	defer m.workerMu.Unlock()
+	if m.workerClosed || m.workersStarted {
+		return
+	}
+	m.workersStarted = true
+	m.spawnReservedWorkersLocked()
+}
+
+func (m *ProbeManager) spawnReservedWorkersLocked() {
+	add := m.taskQueue.reserveToTarget()
+	for i := 0; i < add; i++ {
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
 			m.runProbeWorker()
 		}()
 	}
+}
+
+// SetConcurrency changes the number of probe workers. It is safe to call
+// before or after Start. Extra workers wake, put back any task they have
+// already taken, and exit. No workers are added after Stop.
+func (m *ProbeManager) SetConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.workerMu.Lock()
+	defer m.workerMu.Unlock()
+	if m.workerClosed {
+		return
+	}
+	m.workerCount = n
+	m.taskQueue.setTarget(n)
+	if !m.workersStarted {
+		return
+	}
+	m.spawnReservedWorkersLocked()
+}
+
+// Concurrency returns the current probe worker target.
+func (m *ProbeManager) Concurrency() int {
+	if m == nil || m.taskQueue == nil {
+		return 0
+	}
+	m.taskQueue.mu.Lock()
+	defer m.taskQueue.mu.Unlock()
+	return m.taskQueue.target
+}
+
+func (m *ProbeManager) workerNum() int {
+	m.taskQueue.mu.Lock()
+	defer m.taskQueue.mu.Unlock()
+	return m.taskQueue.workers
 }
 
 // Stop signals all probe workers to stop and waits for completion.
@@ -345,6 +451,9 @@ func (m *ProbeManager) Start() {
 //     state; expected ownership is that callers stop upstream event sources first.
 func (m *ProbeManager) Stop() {
 	m.stopOnce.Do(func() {
+		m.workerMu.Lock()
+		m.workerClosed = true
+		m.workerMu.Unlock()
 		close(m.stopCh)
 		m.taskQueue.StopDropPending()
 	})

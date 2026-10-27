@@ -76,17 +76,48 @@ func supportsANSIColorOnStderr() bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func loadRuntimeConfig(engine *state.StateEngine) *config.RuntimeConfig {
+func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *config.RuntimeConfig {
 	runtimeCfg, ver, err := engine.GetSystemConfig()
 	if err != nil {
 		fatalf("load system config: %v", err)
 	}
+	raw, _, rawErr := engine.GetSystemConfigRaw()
+	if rawErr != nil {
+		fatalf("load system config: %v", rawErr)
+	}
 	if runtimeCfg == nil {
 		log.Println("No persisted runtime config found, using defaults")
-		return config.NewDefaultRuntimeConfig()
+		runtimeCfg = config.NewDefaultRuntimeConfig()
+	} else {
+		log.Printf("Loaded persisted runtime config (version %d)", ver)
 	}
-	log.Printf("Loaded persisted runtime config (version %d)", ver)
+	if envCfg != nil && config.ApplyMissingProbeSettings(runtimeCfg, []byte(raw), envCfg.ProbeConcurrency, envCfg.ProbeTimeout) {
+		log.Printf(
+			"initialized probe settings were clamped to runtime limits (concurrency 1-%d, timeout <= %s)",
+			config.MaxProbeConcurrency,
+			config.MaxProbeTimeout,
+		)
+	}
 	return runtimeCfg
+}
+
+func currentProbeTimeout(runtimeCfg *atomic.Pointer[config.RuntimeConfig]) time.Duration {
+	timeout := time.Duration(runtimeConfigSnapshot(runtimeCfg).ProbeTimeout)
+	if timeout <= 0 {
+		return config.DefaultProbeTimeout
+	}
+	return timeout
+}
+
+func currentProbeConcurrency(runtimeCfg *atomic.Pointer[config.RuntimeConfig], envCfg *config.EnvConfig) int {
+	concurrency := runtimeConfigSnapshot(runtimeCfg).ProbeConcurrency
+	if concurrency > 0 {
+		return concurrency
+	}
+	if envCfg != nil && envCfg.ProbeConcurrency > 0 {
+		return envCfg.ProbeConcurrency
+	}
+	return config.DefaultProbeConcurrency
 }
 
 func newDirectDownloader(
@@ -255,7 +286,7 @@ func newTopologyRuntime(
 		Metered: metered,
 		LogRepo: engine.StateRepo,
 		StatsFetcher: func(hash node.Hash, url string) ([]byte, time.Duration, int64, int64, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), currentProbeTimeout(runtimeCfg))
 			defer cancel()
 			entry, ok := pool.GetEntry(hash)
 			if !ok {
@@ -277,9 +308,9 @@ func newTopologyRuntime(
 			return body, latency, ingress, egress, err
 		},
 		Pool:        pool,
-		Concurrency: envCfg.ProbeConcurrency,
+		Concurrency: currentProbeConcurrency(runtimeCfg, envCfg),
 		ObservedFetcher: func(hash node.Hash, url string) ([]byte, time.Duration, int64, int64, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), currentProbeTimeout(runtimeCfg))
 			defer cancel()
 			entry, ok := pool.GetEntry(hash)
 			if !ok {

@@ -74,6 +74,8 @@ type ControlPlaneService struct {
 // runtimeConfigAllowedFields is the set of JSON field names that can be patched.
 var runtimeConfigAllowedFields = map[string]bool{
 	"probe_failure_retry_enabled":              true,
+	"probe_concurrency":                        true,
+	"probe_timeout":                            true,
 	"request_log_enabled":                      true,
 	"reverse_proxy_log_detail_enabled":         true,
 	"reverse_proxy_log_req_headers_max_bytes":  true,
@@ -193,6 +195,9 @@ func (s *ControlPlaneService) PatchRuntimeConfig(patchJSON json.RawMessage) (*co
 	// 6. Atomic swap.
 	s.RuntimeCfg.Store(newCfg)
 	s.configVersion = newVersion
+	if s.ProbeMgr != nil {
+		s.ProbeMgr.SetConcurrency(newCfg.ProbeConcurrency)
+	}
 
 	return newCfg, nil
 }
@@ -206,6 +211,13 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	latencyDomain := strings.ToLower(netutil.ExtractDomain(u.Host))
 	if cfg.MaxConsecutiveFailures < 0 {
 		return invalidArg("max_consecutive_failures: must be non-negative")
+	}
+	if cfg.ProbeConcurrency < 1 || cfg.ProbeConcurrency > config.MaxProbeConcurrency {
+		return invalidArg(fmt.Sprintf("probe_concurrency: must be between 1 and %d", config.MaxProbeConcurrency))
+	}
+	probeTimeout := time.Duration(cfg.ProbeTimeout)
+	if probeTimeout <= 0 || probeTimeout > config.MaxProbeTimeout {
+		return invalidArg("probe_timeout: must be > 0 and <= 2m")
 	}
 	if cfg.CacheFlushDirtyThreshold < 0 {
 		return invalidArg("cache_flush_dirty_threshold: must be non-negative")

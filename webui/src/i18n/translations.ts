@@ -839,6 +839,13 @@ Note: Once enabled, requests without authentication information are rejected ins
   "总请求": "Total requests",
   "最近错误：{{message}}": "Recent error: {{message}}",
   "配置已更新（{{count}} 项变更）": "Config updated ({{count}} changes)",
+  "默认开启。出口探测失败后 1–30 分钟退避重试。尚未检测的节点可并行探测，不受每秒一次限制；已检测节点的自动探测仍是每订阅每秒最多一次。429 会冷却该订阅。按流量计费订阅保留原有预算与退避策略。":
+    "On by default. Failed egress probes back off from 1 to 30 minutes. Untested nodes can be probed in parallel and are not limited to one start per second. Nodes already tested stay at one start per second per subscription. HTTP 429 cools down that subscription. Metered subscriptions keep their own budget and backoff.",
+  "初始值为 8，适合约 0.75 核。保存后立即调整探测 worker，范围 1–10000。":
+    "Initial value is 8, sized for about 0.75 core. Saving resizes probe workers immediately. Range is 1–10000.",
+  "单次探测超时。初始值 15s，必须大于 0 且不超过 2m。保存后下一次探测生效。":
+    "Per-probe timeout. Initial value is 15s. It must be greater than 0 and no more than 2m. Applies on the next probe after saving.",
+  "节点拨测并发数必须在 1 到 10000 之间": "Node probe concurrency must be between 1 and 10000",
 };
 
 export function translateDocumentTitle(locale: AppLocale): string {

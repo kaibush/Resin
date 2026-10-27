@@ -54,15 +54,26 @@ func decodeStringSliceJSON(raw string) ([]string, error) {
 
 // GetSystemConfig loads the runtime config and version from state.db.
 // Returns nil config and version 0 if no row exists.
-func (r *StateRepo) GetSystemConfig() (*config.RuntimeConfig, int, error) {
+func (r *StateRepo) GetSystemConfigRaw() (string, int, error) {
 	row := r.db.QueryRow("SELECT config_json, version FROM system_config WHERE id = 1")
 	var configJSON string
 	var version int
 	if err := row.Scan(&configJSON, &version); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, 0, nil
+			return "", 0, nil
 		}
-		return nil, 0, fmt.Errorf("scan system_config: %w", err)
+		return "", 0, fmt.Errorf("scan system_config: %w", err)
+	}
+	return configJSON, version, nil
+}
+
+func (r *StateRepo) GetSystemConfig() (*config.RuntimeConfig, int, error) {
+	configJSON, version, err := r.GetSystemConfigRaw()
+	if err != nil {
+		return nil, 0, err
+	}
+	if configJSON == "" && version == 0 {
+		return nil, 0, nil
 	}
 	cfg := config.NewDefaultRuntimeConfig()
 	if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {

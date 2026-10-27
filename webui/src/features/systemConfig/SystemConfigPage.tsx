@@ -26,6 +26,8 @@ type RuntimeConfigForm = {
   max_latency_test_interval: string;
   max_authority_latency_test_interval: string;
   probe_failure_retry_enabled: boolean;
+  probe_concurrency: string;
+  probe_timeout: string;
   max_egress_test_interval: string;
   latency_test_url: string;
   latency_authorities_raw: string;
@@ -46,6 +48,8 @@ const EDITABLE_FIELDS: Array<keyof RuntimeConfig> = [
   "max_latency_test_interval",
   "max_authority_latency_test_interval",
   "probe_failure_retry_enabled",
+  "probe_concurrency",
+  "probe_timeout",
   "max_egress_test_interval",
   "latency_test_url",
   "latency_authorities",
@@ -66,6 +70,8 @@ const FIELD_LABELS: Record<keyof RuntimeConfig, string> = {
   max_latency_test_interval: "节点延迟最大测试间隔",
   max_authority_latency_test_interval: "权威域名最大测试间隔",
   probe_failure_retry_enabled: "探测失败自动重试与限流保护",
+  probe_concurrency: "节点拨测并发数",
+  probe_timeout: "拨测超时时间",
   max_egress_test_interval: "出口 IP 更新检查间隔",
   latency_test_url: "延迟测试目标 URL",
   latency_authorities: "延迟测试权威域名列表",
@@ -104,6 +110,8 @@ function configToForm(config: RuntimeConfig): RuntimeConfigForm {
     max_latency_test_interval: config.max_latency_test_interval,
     max_authority_latency_test_interval: config.max_authority_latency_test_interval,
     probe_failure_retry_enabled: config.probe_failure_retry_enabled,
+    probe_concurrency: String(config.probe_concurrency),
+    probe_timeout: config.probe_timeout,
     max_egress_test_interval: config.max_egress_test_interval,
     latency_test_url: config.latency_test_url,
     latency_authorities_raw: config.latency_authorities.join("\n"),
@@ -126,6 +134,14 @@ function parseNonNegativeInt(field: string, raw: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(i18next.t("{{field}} 必须是非负整数", { field: requiredFieldLabel(field) }));
+  }
+  return parsed;
+}
+
+function parseProbeConcurrency(raw: string): number {
+  const parsed = parseNonNegativeInt("节点拨测并发数", raw);
+  if (parsed < 1 || parsed > 10000) {
+    throw new Error(i18next.t("节点拨测并发数必须在 1 到 10000 之间"));
   }
   return parsed;
 }
@@ -179,6 +195,8 @@ function parseForm(form: RuntimeConfigForm): RuntimeConfig {
       form.max_authority_latency_test_interval,
     ),
     probe_failure_retry_enabled: form.probe_failure_retry_enabled,
+    probe_concurrency: parseProbeConcurrency(form.probe_concurrency),
+    probe_timeout: parseDurationField("拨测超时时间", form.probe_timeout),
     max_egress_test_interval: parseDurationField("出口 IP 更新检查间隔", form.max_egress_test_interval),
     latency_test_url: latencyURL,
     latency_authorities: parseAuthorities(form.latency_authorities_raw),
@@ -468,7 +486,7 @@ export function SystemConfigPage() {
                     <Switch id="sys-probe-retry" checked={form.probe_failure_retry_enabled}
                       onChange={(event) => setFormField("probe_failure_retry_enabled", event.target.checked)} />
                     {renderRestoreButton("probe_failure_retry_enabled")}
-                    <p className="muted">{t("默认开启。出口探测失败后 1–30 分钟退避重试；普通自动探测每订阅每秒最多一次，429 触发订阅冷却。按流量计费订阅保留原有预算与退避策略。")}</p>
+                    <p className="muted">{t("默认开启。出口探测失败后 1–30 分钟退避重试。尚未检测的节点可并行探测，不受每秒一次限制；已检测节点的自动探测仍是每订阅每秒最多一次。429 会冷却该订阅。按流量计费订阅保留原有预算与退避策略。")}</p>
                   </div>
 
                   <div className="field-group">
@@ -485,6 +503,39 @@ export function SystemConfigPage() {
                       value={form.max_consecutive_failures}
                       onChange={(event) => setFormField("max_consecutive_failures", event.target.value)}
                     />
+                  </div>
+
+                  <div className="field-group">
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <label className="field-label" htmlFor="sys-probe-concurrency" style={{ margin: 0 }}>
+                        {t("节点拨测并发数")}
+                      </label>
+                      {renderRestoreButton("probe_concurrency")}
+                    </div>
+                    <Input
+                      id="sys-probe-concurrency"
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={form.probe_concurrency}
+                      onChange={(event) => setFormField("probe_concurrency", event.target.value)}
+                    />
+                    <p className="muted">{t("初始值为 8，适合约 0.75 核。保存后立即调整探测 worker，范围 1–10000。")}</p>
+                  </div>
+
+                  <div className="field-group">
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <label className="field-label" htmlFor="sys-probe-timeout" style={{ margin: 0 }}>
+                        {t("拨测超时时间")}
+                      </label>
+                      {renderRestoreButton("probe_timeout")}
+                    </div>
+                    <Input
+                      id="sys-probe-timeout"
+                      value={form.probe_timeout}
+                      onChange={(event) => setFormField("probe_timeout", event.target.value)}
+                    />
+                    <p className="muted">{t("单次探测超时。初始值 15s，必须大于 0 且不超过 2m。保存后下一次探测生效。")}</p>
                   </div>
                 </div>
               </section>
@@ -780,14 +831,6 @@ export function SystemConfigPage() {
                     <div className="field-group">
                       <label className="field-label" style={{ margin: 0 }}>{t("最大延迟表条目数")}</label>
                       <Input readOnly disabled value={String(envBaseline.max_latency_table_entries)} />
-                    </div>
-                    <div className="field-group">
-                      <label className="field-label" style={{ margin: 0 }}>{t("节点拨测并发数")}</label>
-                      <Input readOnly disabled value={String(envBaseline.probe_concurrency)} />
-                    </div>
-                    <div className="field-group">
-                      <label className="field-label" style={{ margin: 0 }}>{t("拨测超时时间")}</label>
-                      <Input readOnly disabled value={envBaseline.probe_timeout} />
                     </div>
                     <div className="field-group">
                       <label className="field-label" style={{ margin: 0 }}>{t("资源获取超时时间")}</label>

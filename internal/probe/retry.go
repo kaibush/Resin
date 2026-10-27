@@ -66,21 +66,31 @@ func (m *ProbeManager) recordEgressRetry(h node.Hash, success bool) {
 	m.retries[h] = s
 }
 
-// All automatic unmetered probes share a one-request/second subscription
-// allowance. Admission never sleeps in a worker: skipped tasks remain due and
-// are rediscovered by the scanner. Manual probes remain explicitly on demand.
+// Probes of nodes that have already been tested share one start per second
+// per subscription. Nodes that have never been tested skip that gate so a new
+// subscription can be screened in parallel; worker count is the concurrency
+// cap. HTTP 429 cooldown still applies to both. Admission never sleeps in a
+// worker: skipped tasks remain due and are rediscovered by the scanner.
+// Manual probes remain explicitly on demand.
 func (m *ProbeManager) admitAutomaticProbe(e *node.NodeEntry, now time.Time) bool {
 	if !m.failureRetryEnabled() {
 		return true
 	}
+	discovery := e.IsUnverified()
 	ids := e.SubscriptionIDs()
 	m.retryMu.Lock()
 	defer m.retryMu.Unlock()
 	for _, id := range ids {
 		g := m.probeGroups[id]
-		if now.Before(g.next) || now.Before(g.cooldown) {
+		if now.Before(g.cooldown) {
 			return false
 		}
+		if !discovery && now.Before(g.next) {
+			return false
+		}
+	}
+	if discovery {
+		return true
 	}
 	for _, id := range ids {
 		g := m.probeGroups[id]

@@ -974,3 +974,178 @@ func TestParseCloudflareTrace_NoIP(t *testing.T) {
 		t.Fatal("expected error when ip field is missing")
 	}
 }
+
+func TestProbeTaskQueueRetireRequeuesOriginalPriority(t *testing.T) {
+	q := newProbeTaskQueue(4, 4, func() bool { return false })
+	q.workers = 2
+	q.target = 2
+	high := probeTask{key: probeTaskKey{kind: probeTaskKindEgress}}
+	normal := probeTask{key: probeTaskKey{kind: probeTaskKindLatency}}
+	if !q.Enqueue(high, probePriorityHigh) || !q.Enqueue(normal, probePriorityNormal) {
+		t.Fatal("enqueue")
+	}
+	q.setTarget(1)
+	if task, ok := q.Dequeue(); ok {
+		t.Fatalf("retiring worker kept %+v", task)
+	}
+	if q.workers != 1 {
+		t.Fatalf("workers after retire: got %d, want 1", q.workers)
+	}
+	task, ok := q.Dequeue()
+	if !ok || task != high {
+		t.Fatalf("remaining worker got %+v ok=%v, want high-priority task", task, ok)
+	}
+}
+
+func TestSetConcurrencyBeforeStart(t *testing.T) {
+	mgr := NewProbeManager(ProbeConfig{Concurrency: 1})
+	mgr.SetConcurrency(3)
+	mgr.startWorkers()
+	defer mgr.Stop()
+	if mgr.workerNum() != 3 || mgr.Concurrency() != 3 {
+		t.Fatalf("workers=%d target=%d", mgr.workerNum(), mgr.Concurrency())
+	}
+}
+
+func TestSetConcurrencyIgnoredAfterStop(t *testing.T) {
+	mgr := NewProbeManager(ProbeConfig{Concurrency: 1})
+	mgr.startWorkers()
+	mgr.Stop()
+	mgr.SetConcurrency(4)
+	if mgr.workerNum() != 1 || mgr.Concurrency() != 1 {
+		t.Fatalf("workers=%d target=%d", mgr.workerNum(), mgr.Concurrency())
+	}
+}
+
+func TestSetConcurrencyScalesProbeWorkers(t *testing.T) {
+	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		MaxLatencyTableEntries: 16,
+		MaxConsecutiveFailures: func() int { return 3 },
+	})
+	var inflight atomic.Int32
+	var maxInflight atomic.Int32
+	entered := make(chan struct{}, 8)
+	var holdMu sync.Mutex
+	hold := make(chan struct{})
+	waitHold := func() {
+		holdMu.Lock()
+		ch := hold
+		holdMu.Unlock()
+		if ch != nil {
+			<-ch
+		}
+	}
+	closeHold := func() {
+		holdMu.Lock()
+		ch := hold
+		hold = nil
+		holdMu.Unlock()
+		if ch != nil {
+			close(ch)
+		}
+	}
+	swapHold := func(next chan struct{}) chan struct{} {
+		holdMu.Lock()
+		old := hold
+		hold = next
+		holdMu.Unlock()
+		return old
+	}
+
+	mgr := NewProbeManager(ProbeConfig{
+		Pool:        pool,
+		Concurrency: 1,
+		Fetcher: func(node.Hash, string) ([]byte, time.Duration, error) {
+			n := inflight.Add(1)
+			defer inflight.Add(-1)
+			for {
+				old := maxInflight.Load()
+				if n <= old || maxInflight.CompareAndSwap(old, n) {
+					break
+				}
+			}
+			entered <- struct{}{}
+			waitHold()
+			return []byte("ip=203.0.113.9\nloc=US\n"), 5 * time.Millisecond, nil
+		},
+	})
+	mgr.startWorkers()
+	t.Cleanup(func() {
+		closeHold()
+		mgr.Stop()
+	})
+
+	raws := [][]byte{
+		[]byte(`{"type":"scale-a"}`),
+		[]byte(`{"type":"scale-b"}`),
+		[]byte(`{"type":"scale-c"}`),
+	}
+	var hashes []node.Hash
+	for _, raw := range raws {
+		hash := node.HashFromRawOptions(raw)
+		pool.AddNodeFromSub(hash, raw, "sub1")
+		entry, ok := pool.GetEntry(hash)
+		if !ok {
+			t.Fatal("missing entry")
+		}
+		storeOutbound(entry)
+		hashes = append(hashes, hash)
+		mgr.TriggerImmediateEgressProbe(hash)
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first worker did not start")
+	}
+	select {
+	case <-entered:
+		t.Fatal("concurrency 1 ran a second probe")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	mgr.SetConcurrency(3)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("worker %d did not start after scale up", i+2)
+		}
+	}
+	if got := maxInflight.Load(); got != 3 {
+		t.Fatalf("max inflight after scale up: got %d, want 3", got)
+	}
+
+	mgr.SetConcurrency(1)
+	next := make(chan struct{})
+	old := swapHold(next)
+	close(old)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mgr.workerNum() == 1 && inflight.Load() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if mgr.workerNum() != 1 || inflight.Load() != 0 {
+		t.Fatalf("after scale down workers=%d inflight=%d", mgr.workerNum(), inflight.Load())
+	}
+
+	maxInflight.Store(0)
+	for _, hash := range hashes {
+		mgr.TriggerImmediateEgressProbe(hash)
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("remaining worker did not start")
+	}
+	select {
+	case <-entered:
+		t.Fatal("scaled-down worker pool ran a second probe")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got := maxInflight.Load(); got != 1 {
+		t.Fatalf("max inflight after scale down: got %d, want 1", got)
+	}
+}

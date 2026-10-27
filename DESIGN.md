@@ -408,7 +408,7 @@ Resin 使用计数器熔断机制保护系统稳定性。
 #### 出口探测
 * 目标：全局节点池所有节点。
 * 职责：定期刷新节点的出口 IP 与地区信息，确保路由策略（如同 IP 关联、地区过滤）的准确性。
-* 探测时机与调度策略：每隔 13～17 秒全局扫描一次。调度依据是 `LastEgressUpdateAttempt`：对未来 15 秒内将会或者已经超过 `MaxEgressTestInterval` 的节点进行探测。另外，新的节点加入全局节点池时，需要立即进行一次出口探测。
+* 探测时机与调度策略：每隔 13～17 秒全局扫描一次。调度依据是 `LastEgressUpdateAttempt`：对未来 15 秒内将会或者已经超过 `MaxEgressTestInterval` 的节点进行探测。另外，新的节点加入全局节点池时，需要立即进行一次出口探测。尚未检测过的节点不受已检测节点“每订阅每秒一次”的限制，并行度等于运行时 `ProbeConcurrency`；已检测节点的周期探测和失败重试仍遵守该限制。HTTP 429 冷却对两者都生效。
 * 探测动作：通过节点请求 `https://cloudflare.com/cdn-cgi/trace` (GET)。
 * 结果处理：
 	* 记录本次网络请求的结果。调用 `RecordResult(id, true/false)`。
@@ -2328,7 +2328,7 @@ GeoIP 与订阅的下载都有错误重试的需求。
 
 核心设置：
 * `RESIN_MAX_LATENCY_TABLE_ENTRIES`：每个节点延迟表中“普通站点 LRU 区”的最大表项数。默认 12，最大 32（超限启动失败）。
-* `RESIN_PROBE_CONCURRENCY`：节点探测的最大并发数量。默认 2，最大 10000（超限启动失败）。
+* `RESIN_PROBE_CONCURRENCY`：探测并发的初始值，仅当数据库还没有 `probe_concurrency` 时生效。默认 8，最大 10000（超限启动失败）。默认按约 0.75 核的容器预算选择。页面保存后以数据库为准，重启不再被该环境变量覆盖。
 * `RESIN_GEOIP_UPDATE_SCHEDULE`：GeoIP 数据库自动更新的 Cron 表达式。默认 "0 7 * * *"。
 * `RESIN_DEFAULT_PLATFORM_STICKY_TTL`：默认平台粘性会话时长。默认 "168h"。
 * `RESIN_DEFAULT_PLATFORM_REGEX_FILTERS`：默认平台节点标签过滤规则（JSON 字符串数组）。默认 `[]`。
@@ -2337,7 +2337,7 @@ GeoIP 与订阅的下载都有错误重试的需求。
 * `RESIN_DEFAULT_PLATFORM_REVERSE_PROXY_EMPTY_ACCOUNT_BEHAVIOR`：默认平台在反代 Account 为空时的行为。枚举：`RANDOM|FIXED_HEADER|ACCOUNT_HEADER_RULE`。默认 `ACCOUNT_HEADER_RULE`。
 * `RESIN_DEFAULT_PLATFORM_REVERSE_PROXY_FIXED_ACCOUNT_HEADER`：默认平台固定提取 Header 列表（多行，每行一个 Header）。仅当上项为 `FIXED_HEADER` 时必须至少提供一个合法 Header。默认 `Authorization`。
 * `RESIN_DEFAULT_PLATFORM_ALLOCATION_POLICY`：默认平台分配策略。枚举：`BALANCED|PREFER_LOW_LATENCY|PREFER_IDLE_IP`。默认 `BALANCED`。
-* `RESIN_PROBE_TIMEOUT`：单次探测请求超时。默认 "15s"。
+* `RESIN_PROBE_TIMEOUT`：单次探测超时的初始值，仅当数据库还没有 `probe_timeout` 时生效。默认 "15s"。超过运行时上限 2 分钟时按 2 分钟初始化。页面保存后以数据库为准。
 * `RESIN_RESOURCE_FETCH_TIMEOUT`：资源下载（订阅/GeoIP）单次尝试超时。默认 "30s"。
 * `RESIN_NODE_DNS_UPSTREAMS`：Resin 托管节点域名解析上游，JSON 字符串数组。默认值为 `["https://doh.pub/dns-query","https://dns.alidns.com/dns-query","tls://223.5.5.5?sni=dns.alidns.com","local"]`；设置后完全按数组顺序作为 failover 链。仅作用于内部 sing-box builder 解析节点域名，不影响订阅下载、GeoIP 下载等其他资源下载路径。
   * 支持：`local`、`udp://host[:port]`、`tcp://host[:port]`、`tls://host[:port]?sni=name`、`quic://host[:port]?sni=name`、`https://host[:port][/path]?sni=name&bootstrap=local`、`h3://host[:port][/path]?sni=name&bootstrap=local`。
@@ -2408,6 +2408,8 @@ Resin 支持通过 API (`PATCH /system/config`) 动态调整大部分全局运�
 * `MaxEgressTestInterval`: 节点出口 IP 探测的最大间隔。最小 30 秒。默认 1 天。
 
 #### 探测设置
+* `ProbeConcurrency`: 探测 worker 数量。默认 8，范围 1–10000。保存后立即增减 worker。初始值按约 0.75 核选择，CPU 更宽裕时可在页面调高。
+* `ProbeTimeout`: 单次探测请求超时。默认 15 秒，必须大于 0 且不超过 2 分钟。每次探测读取当前值。
 * `LatencyTestURL`: 主动延迟探测的目标 URL。默认 `https://www.gstatic.com/generate_204`。一定属于 LatencyAuthorities 之一。如果不属于就加入。
 * `LatencyAuthorities`: 权威域名列表。默认 `["gstatic.com", "google.com", "cloudflare.com", "github.com"]`。
 

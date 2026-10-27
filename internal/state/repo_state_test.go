@@ -944,3 +944,27 @@ func TestStateRepo_ProbeRetryUpgradeDefault(t *testing.T) {
 		t.Fatal("explicit false must survive restart")
 	}
 }
+
+func TestStateRepo_ProbeSettingsUpgradeDefault(t *testing.T) {
+	repo := newTestStateRepo(t)
+	_, err := repo.db.Exec(`INSERT INTO system_config (id,config_json,version,updated_at_ns) VALUES (1,'{"max_consecutive_failures":7}',1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := repo.GetSystemConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProbeConcurrency != config.DefaultProbeConcurrency || time.Duration(cfg.ProbeTimeout) != config.DefaultProbeTimeout || cfg.MaxConsecutiveFailures != 7 {
+		t.Fatalf("missing probe settings should keep defaults: %+v", cfg)
+	}
+	cfg.ProbeConcurrency = 12
+	cfg.ProbeTimeout = config.Duration(9 * time.Second)
+	if err := repo.SaveSystemConfig(cfg, 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = repo.GetSystemConfig()
+	if err != nil || cfg.ProbeConcurrency != 12 || time.Duration(cfg.ProbeTimeout) != 9*time.Second {
+		t.Fatalf("explicit probe settings must survive restart: %+v, %v", cfg, err)
+	}
+}

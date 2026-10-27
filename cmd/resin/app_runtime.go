@@ -96,7 +96,7 @@ func newResinApp(envCfg *config.EnvConfig, engine *state.StateEngine) (*resinApp
 		envCfg:     envCfg,
 		runtimeCfg: &atomic.Pointer[config.RuntimeConfig]{},
 	}
-	app.runtimeCfg.Store(loadRuntimeConfig(engine))
+	app.runtimeCfg.Store(loadRuntimeConfig(engine, envCfg))
 	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
 		return nil, err
 	}

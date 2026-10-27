@@ -239,8 +239,11 @@ func TestSystemConfig_OK(t *testing.T) {
 	if _, ok := body["default_platform_config"]; ok {
 		t.Error("default_platform_config should not be exposed in /system/config")
 	}
-	if _, ok := body["probe_timeout"]; ok {
-		t.Error("probe_timeout should not be exposed in /system/config")
+	if body["probe_timeout"] != "15s" {
+		t.Errorf("probe_timeout: got %v, want 15s", body["probe_timeout"])
+	}
+	if body["probe_concurrency"] != float64(8) {
+		t.Errorf("probe_concurrency: got %v, want 8", body["probe_concurrency"])
 	}
 	if _, ok := body["resource_fetch_timeout"]; ok {
 		t.Error("resource_fetch_timeout should not be exposed in /system/config")
