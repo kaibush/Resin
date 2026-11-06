@@ -577,7 +577,7 @@ export function PlatformDetailPage() {
                       <label className="subscription-switch-label" htmlFor="detail-edit-sticky-reuse-ip">{t("到期优先复用原 IP")}</label>
                       <Switch id="detail-edit-sticky-reuse-ip" aria-describedby="detail-edit-sticky-reuse-hint" {...editForm.register("sticky_reuse_ip")} />
                     </div>
-                    <p className="muted" id="detail-edit-sticky-reuse-hint">{t("开启后，同一账号在租约到期后优先复用最近的出口 IP；原 IP 在当前平台不可用时才重新分配。优先级高于历史账号均衡及软门限。关闭后保留最近绑定，恢复正常到期分配。")}</p>
+                    <p className="muted" id="detail-edit-sticky-reuse-hint">{t("开启后，同一粘性标记优先复用最近的出口 IP；原 IP 在当前平台不可用时才重新分配。最近绑定跨平台保留，删除平台不清除。新平台默认关闭，需单独开启。优先级高于历史均衡及软门限。")}</p>
                   </div>
 
                   <div className="field-group">

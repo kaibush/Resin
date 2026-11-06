@@ -127,7 +127,7 @@ func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingS
 			// in cache on restart. Usually this is an in-memory no-op; only an
 			// unremembered exit writes once before its lease is removed.
 			if plat, ok := c.router.pool.GetPlatform(platID); ok && plat.StickyReuseIP {
-				if err := c.router.rememberStickyIP(plat, state, account, current.EgressIP, current.CreatedAtNs); err != nil {
+				if err := c.router.rememberStickyIP(plat, account, current.EgressIP, current.CreatedAtNs); err != nil {
 					// The expired deadline was popped. Retry later without losing the
 					// only remaining copy or spinning on a persistent storage error.
 					state.Leases.expiryQueue(account).setExpiry(account, nowNs+int64(time.Minute))

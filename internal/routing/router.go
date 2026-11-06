@@ -30,6 +30,7 @@ type PoolAccessor interface {
 
 // Router handles route selection and lease management.
 type Router struct {
+	stickyIPs       *xsync.Map[[sha256.Size]byte, stickyIPBinding]
 	saveStickyIP    func(model.StickyIP) error
 	prepareRoute    func(*platform.Platform, node.Hash) error
 	verifyNode      func(*platform.Platform, node.Hash) error
@@ -62,6 +63,7 @@ type RouterConfig struct {
 
 func NewRouter(cfg RouterConfig) *Router {
 	r := &Router{
+		stickyIPs:       xsync.NewMap[[sha256.Size]byte, stickyIPBinding](),
 		saveStickyIP:    cfg.SaveStickyIP,
 		prepareRoute:    cfg.PrepareRoute,
 		verifyNode:      cfg.VerifyNode,
@@ -244,7 +246,7 @@ func (r *Router) decideStickyLease(
 
 	if loaded {
 		if newLease, hitResult, ok := r.tryLeaseHit(plat, account, current, nowNs); ok {
-			if err := r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
+			if err := r.rememberStickyIP(plat, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
 				return current, xsync.CancelOp, RouteResult{}, err
 			}
 			if plat.IPGovernanceEnabled {
@@ -255,7 +257,7 @@ func (r *Router) decideStickyLease(
 			return newLease, xsync.UpdateOp, hitResult, nil
 		}
 		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, account, current, targetDomain, nowNs); ok {
-			if err := r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
+			if err := r.rememberStickyIP(plat, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
 				return current, xsync.CancelOp, RouteResult{}, err
 			}
 			if plat.IPGovernanceEnabled {
@@ -291,13 +293,9 @@ func (r *Router) createOrAbortStickyLease(
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
 ) (Lease, xsync.ComputeOp, RouteResult, error) {
-	retireIP := netip.Addr{}
-	if hadPreviousLease {
-		retireIP = previous.EgressIP
-	}
-	newLease, createdResult, err := r.createLease(plat, state, account, targetDomain, retireIP)
+	newLease, createdResult, err := r.createLease(plat, state, account, targetDomain, previous)
 	if err == nil {
-		err = r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs)
+		err = r.rememberStickyIP(plat, account, newLease.EgressIP, newLease.CreatedAtNs)
 		if err != nil {
 			r.releaseSelectionReservation(state.IPLoadStats, newLease.EgressIP, plat.IPGovernanceEnabled)
 		}
@@ -408,14 +406,15 @@ func (r *Router) createLease(
 	state *PlatformRoutingState,
 	account string,
 	targetDomain string,
-	retireIP netip.Addr,
+	previous Lease,
 ) (Lease, RouteResult, error) {
+	retireIP := previous.EgressIP
 	var h node.Hash
 	var entry *node.NodeEntry
 	var reused bool
 	var selectedIP netip.Addr
 	if plat.StickyReuseIP {
-		ip := preferredStickyIP(state, account, retireIP)
+		ip := r.preferredStickyIP(account, previous)
 		// Retire exactly once, including when preparation or persistence fails.
 		if retireIP.IsValid() {
 			r.allocationMu.Lock()
@@ -727,7 +726,7 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	eventType := LeaseCreate
 	state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if plat, ok := r.pool.GetPlatform(platformID); ok {
-			if saveErr = r.rememberStickyIP(plat, state, account, lease.EgressIP, lease.CreatedAtNs); saveErr != nil {
+			if saveErr = r.rememberStickyIP(plat, account, lease.EgressIP, lease.CreatedAtNs); saveErr != nil {
 				return current, xsync.CancelOp
 			}
 		}
@@ -788,10 +787,10 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 			return r.newPlatformRoutingState(), false
 		})
 
-		// state.db may contain a newer binding than the last cache.db flush.
-		// Never let a stale cached lease undo a durably saved IP change.
+		// The durable global binding is authoritative over the weak lease
+		// cache. A delayed lease flush on another platform must not undo it.
 		if plat, ok := r.pool.GetPlatform(ml.PlatformID); ok && plat.StickyReuseIP {
-			if saved, ok := state.stickyIPs.Load(sha256.Sum256([]byte(ml.Account))); ok && saved.IP != ip.Unmap() && saved.UpdatedAtNs > ml.CreatedAtNs {
+			if saved, ok := r.stickyIPs.Load(sha256.Sum256([]byte(ml.Account))); ok && saved.IP != ip.Unmap() {
 				continue
 			}
 		}

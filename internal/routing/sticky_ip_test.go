@@ -99,12 +99,12 @@ func TestStickyIPFallbackAndLatestExit(t *testing.T) {
 	if err != nil || third.EgressIP != second.EgressIP {
 		t.Fatalf("latest exit not remembered: %+v %v", third, err)
 	}
-	if writes != 2 || r.ensurePlatformState(p.ID).stickyIPs.Size() != 1 {
+	if writes != 2 || r.stickyIPs.Size() != 1 {
 		t.Fatalf("writes=%d, expected overwrite on fallback only", writes)
 	}
 }
 
-func TestStickyIPDisabledAndPlatformIsolation(t *testing.T) {
+func TestStickyIPDisabledAndCrossPlatformReuse(t *testing.T) {
 	r, p := historyTestRouter(t, "192.0.2.1", "192.0.2.2")
 	p.StickyReuseIP = true
 	first, err := r.RouteRequest(p.Name, "alice", "")
@@ -118,12 +118,8 @@ func TestStickyIPDisabledAndPlatformIsolation(t *testing.T) {
 	pool.addPlatform(other)
 	pool.rebuildPlatformView(other)
 	got, err := r.RouteRequest(other.Name, "alice", "")
-	if err != nil || got.EgressIP == first.EgressIP {
-		t.Fatalf("platform leaked affinity: %+v %v", got, err)
-	}
-	// Make the other exit strictly less loaded again.
-	if err := r.ResetIPHistory(got.EgressIP); err != nil {
-		t.Fatal(err)
+	if err != nil || got.EgressIP != first.EgressIP {
+		t.Fatalf("cross-platform affinity not reused: %+v %v", got, err)
 	}
 	p.StickyReuseIP = false
 	r.saveStickyIP = func(model.StickyIP) error { t.Error("disabled feature wrote binding"); return nil }
@@ -131,7 +127,7 @@ func TestStickyIPDisabledAndPlatformIsolation(t *testing.T) {
 	if err != nil || got.EgressIP == first.EgressIP {
 		t.Fatalf("disabled still preferred old IP: %+v %v", got, err)
 	}
-	if pState := r.ensurePlatformState(p.ID); preferredStickyIP(pState, "alice", netip.Addr{}) != first.EgressIP {
+	if r.preferredStickyIP("alice", Lease{}) != first.EgressIP {
 		t.Fatal("disabling deleted saved affinity")
 	}
 	// Re-enabling must adopt the currently active lease, not the older memory.
@@ -151,7 +147,7 @@ func TestStickyIPVerificationTriesSameExitBeforeFallback(t *testing.T) {
 	r, p := historyTestRouter(t, "192.0.2.1", "192.0.2.1", "192.0.2.2")
 	p.StickyReuseIP = true
 	ip := netip.MustParseAddr("192.0.2.1")
-	r.RestoreStickyIP(model.StickyIP{PlatformID: p.ID, AccountHash: sha256.Sum256([]byte("alice")), EgressIP: ip})
+	r.RestoreStickyIP(model.StickyIP{AccountHash: sha256.Sum256([]byte("alice")), EgressIP: ip})
 	var verified int
 	r.prepareRoute = func(*platform.Platform, node.Hash) error {
 		t.Error("warmed another exit before reusing available IP")
@@ -210,7 +206,7 @@ func TestStickyIPPersistenceFailureAndConcurrentRenewals(t *testing.T) {
 		t.Fatal("persistence failure ignored")
 	}
 	s := r.ensurePlatformState(p.ID)
-	if s.stickyIPs.Size() != 0 || s.Leases.Size() != 0 || s.IPLoadStats.GetForAllocation(ip) != 0 || r.globalIPStats.GetForAllocation(ip) != 0 || r.ipHistory.counts.GetForAllocation(ip) != 0 {
+	if r.stickyIPs.Size() != 0 || s.Leases.Size() != 0 || s.IPLoadStats.GetForAllocation(ip) != 0 || r.globalIPStats.GetForAllocation(ip) != 0 || r.ipHistory.counts.GetForAllocation(ip) != 0 {
 		t.Fatal("failed write leaked affinity or reservations")
 	}
 	var writes atomic.Int64
@@ -272,15 +268,15 @@ func TestStickyIPRenewalDoesNotScanUnchangedPool(t *testing.T) {
 func BenchmarkStickyIPLookup(b *testing.B) {
 	for _, size := range []int{1, 100000} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			s := NewPlatformRoutingState()
+			r := NewRouter(RouterConfig{})
 			ip := netip.MustParseAddr("192.0.2.1")
 			for i := 0; i < size; i++ {
-				s.stickyIPs.Store(sha256.Sum256([]byte(fmt.Sprint(i))), stickyIPBinding{IP: ip})
+				r.stickyIPs.Store(sha256.Sum256([]byte(fmt.Sprint(i))), stickyIPBinding{IP: ip})
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if preferredStickyIP(s, "0", netip.Addr{}) != ip {
+				if r.preferredStickyIP("0", Lease{}) != ip {
 					b.Fatal("lookup failed")
 				}
 			}
@@ -301,7 +297,7 @@ func TestStickyIPRestoreIgnoresOlderCachedExit(t *testing.T) {
 		newIP = netip.MustParseAddr("192.0.2.2")
 	}
 	restarted := newTestRouter(r.pool, nil)
-	restarted.RestoreStickyIP(model.StickyIP{PlatformID: p.ID, AccountHash: sha256.Sum256([]byte("alice")), EgressIP: newIP, UpdatedAtNs: stale.CreatedAtNs + 1})
+	restarted.RestoreStickyIP(model.StickyIP{AccountHash: sha256.Sum256([]byte("alice")), EgressIP: newIP, UpdatedAtNs: stale.CreatedAtNs - 1})
 	restarted.RestoreLeases([]model.Lease{stale})
 	if restarted.LeaseCount(p.ID) != 0 {
 		t.Fatal("stale cached lease overrode durable binding")
@@ -359,7 +355,7 @@ func TestStickyIPCleanupRetriesFailedInitialSave(t *testing.T) {
 	}
 	r.saveStickyIP = nil
 	c.sweepPlatformState(p.ID, r.ensurePlatformState(p.ID), time.Now().Add(2*time.Minute).UnixNano())
-	if r.LeaseCount(p.ID) != 0 || r.ensurePlatformState(p.ID).stickyIPs.Size() != 1 {
+	if r.LeaseCount(p.ID) != 0 || r.stickyIPs.Size() != 1 {
 		t.Fatal("save was not retried")
 	}
 }
@@ -391,7 +387,7 @@ func TestStickyIPReuseWithoutHistoryAndFailedFallbackSave(t *testing.T) {
 			t.Fatal("replacement leaked active load")
 		}
 	}
-	if r.LeaseCount(p.ID) != 0 || preferredStickyIP(s, "alice", netip.Addr{}) != first.EgressIP {
+	if r.LeaseCount(p.ID) != 0 || r.preferredStickyIP("alice", Lease{}) != first.EgressIP {
 		t.Fatal("failed update corrupted remembered IP")
 	}
 }
@@ -413,6 +409,75 @@ func TestStickyIPMappedIPv4RenewalRemainsALeaseHit(t *testing.T) {
 	}
 	if r.HistoricalIPCount(hit.EgressIP) != 1 || r.LeaseIPCount(hit.EgressIP) != 1 {
 		t.Fatal("mapped exit duplicated accounts")
+	}
+}
+
+func TestStickyIPSurvivesPlatformDeletionAndReimport(t *testing.T) {
+	r, p := historyTestRouter(t, "192.0.2.1", "192.0.2.2")
+	p.StickyReuseIP = true
+	var saved model.StickyIP
+	r.saveStickyIP = func(e model.StickyIP) error { saved = e; return nil }
+	first, err := r.RouteRequest(p.Name, "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start with only a newly created platform and newly imported nodes. The
+	// saved binding has no dependency on any original platform ID or node hash.
+	pool := newRouterTestPool()
+	next := platform.NewPlatform("new-platform-id", "Reimported", nil, nil)
+	if next.StickyReuseIP {
+		t.Fatal("new platforms must remain opt-in")
+	}
+	next.StickyReuseIP, next.IPGovernanceEnabled = true, true
+	pool.addPlatform(next)
+	for i, ip := range []string{"192.0.2.1", "192.0.2.2"} {
+		h, e := newRoutableEntry(t, fmt.Sprintf(`{"reimport":%d}`, i), ip)
+		pool.addEntry(h, e)
+	}
+	pool.rebuildPlatformView(next)
+	restarted := newTestRouter(pool, nil)
+	restarted.RestoreStickyIP(saved)
+	if err := restarted.ipHistory.record("alice", first.EgressIP, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := restarted.RouteRequest(next.Name, "alice", "")
+	if err != nil || got.EgressIP != first.EgressIP || got.NodeHash == first.NodeHash {
+		t.Fatalf("reimport lost original exit: %+v %v", got, err)
+	}
+	if restarted.HistoricalIPCount(first.EgressIP) != 1 || restarted.stickyIPs.Size() != 1 {
+		t.Fatal("reimport duplicated records")
+	}
+}
+
+func TestStickyIPGlobalConcurrentWritesAndOlderLeaseTouch(t *testing.T) {
+	r, p := historyTestRouter(t, "192.0.2.1")
+	p.StickyReuseIP = true
+	ip := netip.MustParseAddr("192.0.2.1")
+	var writes atomic.Int64
+	r.saveStickyIP = func(model.StickyIP) error { writes.Add(1); return nil }
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := r.rememberStickyIP(p, "alice", ip, int64(i+1)); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if writes.Load() != 1 || r.stickyIPs.Size() != 1 {
+		t.Fatalf("duplicate global saves: %d", writes.Load())
+	}
+	newIP := netip.MustParseAddr("192.0.2.2")
+	if err := r.rememberStickyIP(p, "alice", newIP, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.rememberStickyIP(p, "alice", ip, 50); err != nil {
+		t.Fatal(err)
+	}
+	if r.preferredStickyIP("alice", Lease{EgressIP: ip, CreatedAtNs: 50}) != newIP || writes.Load() != 2 {
+		t.Fatal("old platform overwrote newer global binding")
 	}
 }
 

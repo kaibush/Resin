@@ -9,6 +9,7 @@ import (
 	"github.com/Resinat/Resin/internal/model"
 	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/platform"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type stickyIPBinding struct {
@@ -16,49 +17,52 @@ type stickyIPBinding struct {
 	UpdatedAtNs int64
 }
 
-// rememberStickyIP is called under the existing per-account lease lock. Reads
-// are O(1) and unchanged exits never write, even after expiry or restart.
-func (r *Router) rememberStickyIP(plat *platform.Platform, state *PlatformRoutingState, account string, ip netip.Addr, updatedAtNs int64) error {
+// rememberStickyIP serializes writes per marker across platforms. Existing
+// lease hits are O(1); same-IP renewals only advance the in-memory generation.
+// Older leases and delayed cleaners cannot overwrite a newer global binding.
+func (r *Router) rememberStickyIP(plat *platform.Platform, account string, ip netip.Addr, updatedAtNs int64) error {
 	if !plat.StickyReuseIP {
 		return nil
 	}
 	ip = ip.Unmap()
 	digest := sha256.Sum256([]byte(account))
-	if old, ok := state.stickyIPs.Load(digest); ok && old.IP == ip {
+	if old, ok := r.stickyIPs.Load(digest); ok && old.UpdatedAtNs >= updatedAtNs {
 		return nil
 	}
-	entry := model.StickyIP{PlatformID: plat.ID, AccountHash: digest, EgressIP: ip, UpdatedAtNs: updatedAtNs}
-	if r.saveStickyIP != nil {
-		if err := r.saveStickyIP(entry); err != nil {
-			return fmt.Errorf("persist sticky IP: %w", err)
+	var saveErr error
+	r.stickyIPs.Compute(digest, func(old stickyIPBinding, loaded bool) (stickyIPBinding, xsync.ComputeOp) {
+		if loaded && old.UpdatedAtNs >= updatedAtNs {
+			return old, xsync.CancelOp
 		}
+		if (!loaded || old.IP != ip) && r.saveStickyIP != nil {
+			entry := model.StickyIP{AccountHash: digest, EgressIP: ip, UpdatedAtNs: updatedAtNs}
+			if saveErr = r.saveStickyIP(entry); saveErr != nil {
+				return old, xsync.CancelOp
+			}
+		}
+		return stickyIPBinding{ip, updatedAtNs}, xsync.UpdateOp
+	})
+	if saveErr != nil {
+		return fmt.Errorf("persist sticky IP: %w", saveErr)
 	}
-	state.stickyIPs.Store(digest, stickyIPBinding{ip, updatedAtNs})
 	return nil
 }
 
 // RestoreStickyIP is used only during bootstrap, before serving requests.
+// It intentionally requires neither a surviving platform nor a live node.
 func (r *Router) RestoreStickyIP(entry model.StickyIP) {
-	if _, ok := r.pool.GetPlatform(entry.PlatformID); ok && entry.EgressIP.IsValid() {
-		r.ensurePlatformState(entry.PlatformID).stickyIPs.Store(entry.AccountHash, stickyIPBinding{entry.EgressIP.Unmap(), entry.UpdatedAtNs})
+	if entry.EgressIP.IsValid() {
+		r.stickyIPs.Store(entry.AccountHash, stickyIPBinding{entry.EgressIP.Unmap(), entry.UpdatedAtNs})
 	}
 }
 
-// ForgetPlatformStickyIPs releases the in-memory index after platform deletion.
-// The database removes its rows via the platform foreign key.
-func (r *Router) ForgetPlatformStickyIPs(platformID string) {
-	if state, ok := r.states.Load(platformID); ok {
-		state.stickyIPs.Clear()
+func (r *Router) preferredStickyIP(account string, previous Lease) netip.Addr {
+	if saved, ok := r.stickyIPs.Load(sha256.Sum256([]byte(account))); ok {
+		if !previous.EgressIP.IsValid() || saved.UpdatedAtNs > previous.CreatedAtNs {
+			return saved.IP
+		}
 	}
-}
-
-func preferredStickyIP(state *PlatformRoutingState, account string, previousIP netip.Addr) netip.Addr {
-	// A still-retained lease is newer than an affinity saved before disabling.
-	if previousIP.IsValid() {
-		return previousIP.Unmap()
-	}
-	ip, _ := state.stickyIPs.Load(sha256.Sum256([]byte(account)))
-	return ip.IP
+	return previous.EgressIP.Unmap()
 }
 
 // selectStickyIPRoute uses the versioned IP index, never a per-request pool or

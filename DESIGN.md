@@ -1239,7 +1239,7 @@ Body：
 
 * `name`：trim 后需非空、全局唯一；不能为保留名 `Default` 或 `api`（大小写不敏感）；且不能包含 `.:|/\@?#%~`、空格、tab、换行、回车。
 * `sticky_ttl`：合法 Go duration。
-* `sticky_reuse_ip`：默认 `false`；开启后到期优先复用该平台/账号最近的可用出口 IP，不受历史软门限影响，不可用才重新分配。最近绑定独立于活跃租约持久化，每账号一行；关闭保留记录。详见 [历史 IP 均衡与到期复用](doc/ip-governance.md)。
+* `sticky_reuse_ip`：默认 `false`；开启后到期优先复用该粘性标记全局最近的可用出口 IP，不受历史软门限影响，不可用才重新分配。最近绑定独立于活跃租约持久化，每标记一行；关闭及删除平台均保留记录，新平台默认关闭。详见 [历史 IP 均衡与到期复用](doc/ip-governance.md)。
 * `regex_filters`：节点标签过滤规则列表，语义与校验见“节点标签过滤规则”。
 * `region_filters`：每项为 ISO 3166-1 alpha-2 小写代码。
 * 枚举字段：`reverse_proxy_miss_action` 仅 `TREAT_AS_EMPTY|REJECT`；`reverse_proxy_empty_account_behavior` 仅 `RANDOM|FIXED_HEADER|ACCOUNT_HEADER_RULE`；`allocation_policy` 仅 `BALANCED|PREFER_LOW_LATENCY|PREFER_IDLE_IP`。

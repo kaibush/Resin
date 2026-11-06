@@ -25,7 +25,23 @@ jobs:
         working-directory: webui
       - run: npm run build
         working-directory: webui
-      - run: go test ./...
+      - name: Go tests
+        run: |
+          if go test ./... > "$RUNNER_TEMP/resin-go-tests.log" 2>&1; then
+            cat "$RUNNER_TEMP/resin-go-tests.log"
+          else
+            cat "$RUNNER_TEMP/resin-go-tests.log"
+            python3 - "$RUNNER_TEMP/resin-go-tests.log" <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+          failures = [i for i, line in enumerate(lines) if line.lstrip().startswith("--- FAIL:") or "[build failed]" in line]
+          for i in failures or [max(0, len(lines) - 25)]:
+              message = "\n".join(lines[max(0, i - 2):i + 25])
+              message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print("::error title=Go test failure::" + message)
+          PY
+            exit 1
+          fi
       - run: go test -race ./internal/routing
 
   image:

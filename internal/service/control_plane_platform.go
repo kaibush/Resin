@@ -611,9 +611,6 @@ func (s *ControlPlaneService) DeletePlatform(id string) error {
 		return internal("delete platform", err)
 	}
 	s.Pool.UnregisterPlatform(id)
-	if s.Router != nil {
-		s.Router.ForgetPlatformStickyIPs(id)
-	}
 	return nil
 }
 
