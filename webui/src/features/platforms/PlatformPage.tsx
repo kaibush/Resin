@@ -258,6 +258,14 @@ export function PlatformPage() {
                 <Input id="create-sticky" placeholder={t("例如 168h")} {...createForm.register("sticky_ttl")} />
               </div>
 
+              <div className="field-group field-span-2">
+                <div className="subscription-switch-item">
+                  <label className="subscription-switch-label" htmlFor="create-sticky-reuse-ip">{t("到期优先复用原 IP")}</label>
+                  <Switch id="create-sticky-reuse-ip" aria-describedby="create-sticky-reuse-hint" {...createForm.register("sticky_reuse_ip")} />
+                </div>
+                <p className="muted" id="create-sticky-reuse-hint">{t("开启后，同一账号在租约到期后优先复用最近的出口 IP；原 IP 在当前平台不可用时才重新分配。优先级高于历史账号均衡及软门限。关闭后保留最近绑定，恢复正常到期分配。")}</p>
+              </div>
+
               <div className="field-group">
                 <label className="field-label" htmlFor="create-miss-action">
                   {t("反向代理账号解析出错策略")}

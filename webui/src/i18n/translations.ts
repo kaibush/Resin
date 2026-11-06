@@ -446,6 +446,8 @@ Note: Once enabled, requests without authentication information are rejected ins
   "均衡": "Balanced",
   "优先低延迟": "Prefer low latency",
   "优先活跃租约较少的出口 IP": "Prefer the egress IP with fewer active leases",
+  "到期优先复用原 IP": "Prefer previous IP after lease expiry",
+  "开启后，同一账号在租约到期后优先复用最近的出口 IP；原 IP 在当前平台不可用时才重新分配。优先级高于历史账号均衡及软门限。关闭后保留最近绑定，恢复正常到期分配。": "Reuse the account’s latest exit IP after lease expiry while it remains available on this platform. This takes priority over historical balancing and its soft limit. Disabling preserves saved bindings and restores normal allocation after expiry.",
   "启用历史账号 IP 均衡": "Enable historical account IP balancing",
   "每个出口 IP 的历史账号软门限": "Historical account soft ceiling per egress IP",
   "仅开启后记录并按历史不同账号数均衡。同一标记再次使用同一 IP 不重复计数，租约到期不减数，跨平台同一出口合并统计。全部达到门限时仍选择历史账号最少的 IP；0 表示不设门限。关闭后保留历史，恢复平台原分配策略。":

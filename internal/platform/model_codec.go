@@ -142,6 +142,7 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		mp.AllocationPolicy,
 		mp.PassiveCircuitBreakerDisabled,
 	)
+	plat.StickyReuseIP = mp.StickyReuseIP
 	plat.IPGovernanceEnabled = mp.IPGovernanceEnabled
 	plat.IPGovernanceMaxAccountsPerIP = mp.IPGovernanceMaxAccountsPerIP
 	plat.EgressVerificationMaxAgeNs = mp.EgressVerificationMaxAgeNs

@@ -95,6 +95,7 @@ var runtimeConfigAllowedFields = map[string]bool{
 }
 
 var platformPatchAllowedFields = map[string]bool{
+	"sticky_reuse_ip":                      true,
 	"name":                                 true,
 	"sticky_ttl":                           true,
 	"regex_filters":                        true,

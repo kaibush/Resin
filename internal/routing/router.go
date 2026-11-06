@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -29,6 +30,7 @@ type PoolAccessor interface {
 
 // Router handles route selection and lease management.
 type Router struct {
+	saveStickyIP    func(model.StickyIP) error
 	prepareRoute    func(*platform.Platform, node.Hash) error
 	verifyNode      func(*platform.Platform, node.Hash) error
 	pool            PoolAccessor
@@ -43,6 +45,7 @@ type Router struct {
 }
 
 type RouterConfig struct {
+	SaveStickyIP    func(model.StickyIP) error
 	SaveIPHistory   func([]model.IPHistory) error
 	DeleteIPHistory func(string) error
 	PrepareRoute    func(*platform.Platform, node.Hash) error
@@ -59,6 +62,7 @@ type RouterConfig struct {
 
 func NewRouter(cfg RouterConfig) *Router {
 	r := &Router{
+		saveStickyIP:    cfg.SaveStickyIP,
 		prepareRoute:    cfg.PrepareRoute,
 		verifyNode:      cfg.VerifyNode,
 		pool:            cfg.Pool,
@@ -185,7 +189,8 @@ func (r *Router) routeSticky(
 	var routeErr error
 
 	state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
-		if r.prepareRoute != nil {
+		// Reuse-enabled misses try their remembered exit before warming a new node.
+		if r.prepareRoute != nil && (!plat.StickyReuseIP || (loaded && !current.IsExpired(time.Now()))) {
 			h := node.Zero
 			if loaded && !current.IsExpired(time.Now()) {
 				h = current.NodeHash
@@ -239,6 +244,9 @@ func (r *Router) decideStickyLease(
 
 	if loaded {
 		if newLease, hitResult, ok := r.tryLeaseHit(plat, account, current, nowNs); ok {
+			if err := r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
+				return current, xsync.CancelOp, RouteResult{}, err
+			}
 			if plat.IPGovernanceEnabled {
 				if err := r.ipHistory.record(account, newLease.EgressIP, nil); err != nil {
 					return current, xsync.CancelOp, RouteResult{}, err
@@ -247,6 +255,9 @@ func (r *Router) decideStickyLease(
 			return newLease, xsync.UpdateOp, hitResult, nil
 		}
 		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, account, current, targetDomain, nowNs); ok {
+			if err := r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs); err != nil {
+				return current, xsync.CancelOp, RouteResult{}, err
+			}
 			if plat.IPGovernanceEnabled {
 				if err := r.ipHistory.record(account, newLease.EgressIP, nil); err != nil {
 					return current, xsync.CancelOp, RouteResult{}, err
@@ -265,8 +276,6 @@ func (r *Router) decideStickyLease(
 		state,
 		account,
 		targetDomain,
-		now,
-		nowNs,
 		current,
 		hadPreviousLease,
 		invalidation,
@@ -278,8 +287,6 @@ func (r *Router) createOrAbortStickyLease(
 	state *PlatformRoutingState,
 	account string,
 	targetDomain string,
-	now time.Time,
-	nowNs int64,
 	previous Lease,
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
@@ -288,7 +295,13 @@ func (r *Router) createOrAbortStickyLease(
 	if hadPreviousLease {
 		retireIP = previous.EgressIP
 	}
-	newLease, createdResult, err := r.createLease(plat, state, targetDomain, now, nowNs, retireIP)
+	newLease, createdResult, err := r.createLease(plat, state, account, targetDomain, retireIP)
+	if err == nil {
+		err = r.rememberStickyIP(plat, state, account, newLease.EgressIP, newLease.CreatedAtNs)
+		if err != nil {
+			r.releaseSelectionReservation(state.IPLoadStats, newLease.EgressIP, plat.IPGovernanceEnabled)
+		}
+	}
 	if err == nil && plat.IPGovernanceEnabled {
 		err = r.ipHistory.record(account, newLease.EgressIP, func() {
 			state.IPLoadStats.CommitReservation(newLease.EgressIP)
@@ -325,7 +338,7 @@ func (r *Router) tryLeaseHit(
 	nowNs int64,
 ) (Lease, RouteResult, bool) {
 	entry, ok := r.pool.GetEntry(current.NodeHash)
-	if !ok || !plat.View().Contains(current.NodeHash) || entry.GetEgressIP() != current.EgressIP {
+	if !ok || !plat.View().Contains(current.NodeHash) || entry.GetEgressIP().Unmap() != current.EgressIP.Unmap() {
 		return Lease{}, RouteResult{}, false
 	}
 
@@ -369,7 +382,7 @@ func (r *Router) tryLeaseSameIPRotation(
 			return Lease{}, RouteResult{}, false
 		}
 		entry, exists := r.pool.GetEntry(bestHash)
-		if !exists || !plat.View().Contains(bestHash) || entry.GetEgressIP() != current.EgressIP {
+		if !exists || !plat.View().Contains(bestHash) || entry.GetEgressIP().Unmap() != current.EgressIP.Unmap() {
 			return Lease{}, RouteResult{}, false
 		}
 	}
@@ -393,15 +406,46 @@ func (r *Router) tryLeaseSameIPRotation(
 func (r *Router) createLease(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	account string,
 	targetDomain string,
-	now time.Time,
-	nowNs int64,
 	retireIP netip.Addr,
 ) (Lease, RouteResult, error) {
-	h, entry, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, true, retireIP)
-	if err != nil {
-		return Lease{}, RouteResult{}, err
+	var h node.Hash
+	var entry *node.NodeEntry
+	var reused bool
+	var selectedIP netip.Addr
+	if plat.StickyReuseIP {
+		ip := preferredStickyIP(state, account, retireIP)
+		// Retire exactly once, including when preparation or persistence fails.
+		if retireIP.IsValid() {
+			r.allocationMu.Lock()
+			state.IPLoadStats.allocationMu.Lock()
+			state.IPLoadStats.Dec(retireIP)
+			state.IPLoadStats.allocationMu.Unlock()
+			r.allocationMu.Unlock()
+			retireIP = netip.Addr{}
+		}
+		h, entry, reused = r.selectStickyIPRoute(plat, state.IPLoadStats, ip, targetDomain)
+		if reused {
+			selectedIP = ip
+			r.reserveStickyIP(plat, state.IPLoadStats, ip)
+		} else if r.prepareRoute != nil {
+			if err := r.prepareRoute(plat, node.Zero); err != nil {
+				return Lease{}, RouteResult{}, err
+			}
+		}
 	}
+	if !reused {
+		var err error
+		h, entry, err = r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, true, retireIP)
+		if err != nil {
+			return Lease{}, RouteResult{}, err
+		}
+		selectedIP = entry.GetEgressIP()
+	}
+	// Start a full TTL after potentially slow verification.
+	now := time.Now()
+	nowNs := now.UnixNano()
 	ttl := plat.StickyTTLNs
 	if ttl <= 0 {
 		ttl = int64(24 * time.Hour) // Default safeguard
@@ -409,7 +453,7 @@ func (r *Router) createLease(
 
 	lease := Lease{
 		NodeHash:       h,
-		EgressIP:       entry.GetEgressIP(),
+		EgressIP:       selectedIP,
 		CreatedAtNs:    nowNs,
 		ExpiryNs:       now.Add(time.Duration(ttl)).UnixNano(),
 		LastAccessedNs: nowNs,
@@ -577,7 +621,7 @@ func chooseSameIPRotationCandidate(
 
 	plat.View().Range(func(h node.Hash) bool {
 		entry, ok := pool.GetEntry(h)
-		if !ok || entry.GetEgressIP() != targetIP {
+		if !ok || entry.GetEgressIP().Unmap() != targetIP.Unmap() {
 			return true
 		}
 		if fallbackHash == node.Zero {
@@ -679,8 +723,14 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 		LastAccessedNs: ml.LastAccessedNs,
 	}
 
+	var saveErr error
 	eventType := LeaseCreate
 	state.Leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+		if plat, ok := r.pool.GetPlatform(platformID); ok {
+			if saveErr = r.rememberStickyIP(plat, state, account, lease.EgressIP, lease.CreatedAtNs); saveErr != nil {
+				return current, xsync.CancelOp
+			}
+		}
 		if loaded {
 			state.Leases.stats.Dec(current.EgressIP)
 			eventType = LeaseReplace
@@ -689,6 +739,9 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 		return lease, xsync.UpdateOp
 	})
 
+	if saveErr != nil {
+		return saveErr
+	}
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       eventType,
 		PlatformID: platformID,
@@ -734,6 +787,14 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 		state, _ := r.states.LoadOrCompute(ml.PlatformID, func() (*PlatformRoutingState, bool) {
 			return r.newPlatformRoutingState(), false
 		})
+
+		// state.db may contain a newer binding than the last cache.db flush.
+		// Never let a stale cached lease undo a durably saved IP change.
+		if plat, ok := r.pool.GetPlatform(ml.PlatformID); ok && plat.StickyReuseIP {
+			if saved, ok := state.stickyIPs.Load(sha256.Sum256([]byte(ml.Account))); ok && saved.IP != ip.Unmap() && saved.UpdatedAtNs > ml.CreatedAtNs {
+				continue
+			}
+		}
 
 		l := Lease{
 			NodeHash:       h,

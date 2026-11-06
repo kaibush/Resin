@@ -21,6 +21,7 @@ import (
 
 // PlatformResponse is the API response model for a platform.
 type PlatformResponse struct {
+	StickyReuseIP                    bool     `json:"sticky_reuse_ip"`
 	EgressVerificationMaxAge         string   `json:"egress_verification_max_age"`
 	ID                               string   `json:"id"`
 	Name                             string   `json:"name"`
@@ -54,6 +55,7 @@ func platformToResponse(p model.Platform) PlatformResponse {
 		ReverseProxyFixedAccountHeader:   fixedHeader,
 		AllocationPolicy:                 p.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    p.PassiveCircuitBreakerDisabled,
+		StickyReuseIP:                    p.StickyReuseIP,
 		IPGovernanceEnabled:              p.IPGovernanceEnabled,
 		IPGovernanceMaxAccountsPerIP:     p.IPGovernanceMaxAccountsPerIP,
 		UpdatedAt:                        time.Unix(0, p.UpdatedAtNs).UTC().Format(time.RFC3339Nano),
@@ -73,6 +75,7 @@ func (s *ControlPlaneService) withRoutableNodeCount(resp PlatformResponse) Platf
 }
 
 type platformConfig struct {
+	StickyReuseIP                    bool
 	EgressVerificationMaxAgeNs       int64
 	Name                             string
 	StickyTTLNs                      int64
@@ -132,6 +135,7 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 		ReverseProxyFixedAccountHeader:   normalizeHeaderFieldName(mp.ReverseProxyFixedAccountHeader),
 		AllocationPolicy:                 mp.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    mp.PassiveCircuitBreakerDisabled,
+		StickyReuseIP:                    mp.StickyReuseIP,
 		IPGovernanceEnabled:              mp.IPGovernanceEnabled,
 		IPGovernanceMaxAccountsPerIP:     mp.IPGovernanceMaxAccountsPerIP,
 	}
@@ -150,6 +154,7 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		ReverseProxyFixedAccountHeader:   cfg.ReverseProxyFixedAccountHeader,
 		AllocationPolicy:                 cfg.AllocationPolicy,
 		PassiveCircuitBreakerDisabled:    cfg.PassiveCircuitBreakerDisabled,
+		StickyReuseIP:                    cfg.StickyReuseIP,
 		IPGovernanceEnabled:              cfg.IPGovernanceEnabled,
 		IPGovernanceMaxAccountsPerIP:     cfg.IPGovernanceMaxAccountsPerIP,
 		UpdatedAtNs:                      updatedAtNs,
@@ -173,6 +178,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.AllocationPolicy,
 		cfg.PassiveCircuitBreakerDisabled,
 	)
+	plat.StickyReuseIP = cfg.StickyReuseIP
 	plat.IPGovernanceEnabled = cfg.IPGovernanceEnabled
 	plat.IPGovernanceMaxAccountsPerIP = cfg.IPGovernanceMaxAccountsPerIP
 	plat.EgressVerificationMaxAgeNs = cfg.EgressVerificationMaxAgeNs
@@ -351,6 +357,7 @@ func (s *ControlPlaneService) GetPlatform(id string) (*PlatformResponse, error) 
 
 // CreatePlatformRequest holds create platform parameters.
 type CreatePlatformRequest struct {
+	StickyReuseIP                    *bool    `json:"sticky_reuse_ip"`
 	EgressVerificationMaxAge         *string  `json:"egress_verification_max_age"`
 	Name                             *string  `json:"name"`
 	StickyTTL                        *string  `json:"sticky_ttl"`
@@ -423,6 +430,9 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 			return nil, invalidArg("invalid egress_verification_max_age")
 		}
 		cfg.EgressVerificationMaxAgeNs = int64(d)
+	}
+	if req.StickyReuseIP != nil {
+		cfg.StickyReuseIP = *req.StickyReuseIP
 	}
 	if req.IPGovernanceEnabled != nil {
 		cfg.IPGovernanceEnabled = *req.IPGovernanceEnabled
@@ -550,6 +560,11 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 	} else if ok {
 		cfg.EgressVerificationMaxAgeNs = int64(d)
 	}
+	if enabled, ok, err := patch.optionalBool("sticky_reuse_ip"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.StickyReuseIP = enabled
+	}
 	if enabled, ok, err := patch.optionalBool("ip_governance_enabled"); err != nil {
 		return nil, err
 	} else if ok {
@@ -596,6 +611,9 @@ func (s *ControlPlaneService) DeletePlatform(id string) error {
 		return internal("delete platform", err)
 	}
 	s.Pool.UnregisterPlatform(id)
+	if s.Router != nil {
+		s.Router.ForgetPlatformStickyIPs(id)
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ import "github.com/Resinat/Resin/internal/probepolicy"
 
 // Platform represents a routing platform.
 type Platform struct {
+	StickyReuseIP                    bool   `json:"sticky_reuse_ip"`
 	EgressVerificationMaxAgeNs       int64  `json:"egress_verification_max_age_ns"`
 	ID                               string `json:"id"`
 	Name                             string `json:"name"`

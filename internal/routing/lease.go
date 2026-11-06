@@ -145,6 +145,7 @@ type IPLoadStats struct {
 }
 
 type ipRouteSnapshot struct {
+	view     platform.ReadOnlyView
 	revision uint64
 	byIP     map[netip.Addr][]node.Hash
 }
@@ -352,7 +353,7 @@ func (s *IPLoadStats) candidateNodes(view platform.ReadOnlyView, pool PoolAccess
 	var latest map[netip.Addr][]node.Hash
 	for attempt := 0; attempt < 3; attempt++ {
 		revision := view.Revision()
-		if s.candidates.byIP != nil && s.candidates.revision == revision {
+		if s.candidates.byIP != nil && s.candidates.view == view && s.candidates.revision == revision {
 			return s.candidates.byIP
 		}
 
@@ -375,7 +376,7 @@ func (s *IPLoadStats) candidateNodes(view platform.ReadOnlyView, pool PoolAccess
 			})
 		}
 		if view.Revision() == revision {
-			s.candidates = ipRouteSnapshot{revision: revision, byIP: byIP}
+			s.candidates = ipRouteSnapshot{view: view, revision: revision, byIP: byIP}
 			return byIP
 		}
 	}

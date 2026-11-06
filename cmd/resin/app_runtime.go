@@ -153,6 +153,7 @@ func (a *resinApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.Retr
 	// Phase 4: OutboundManager and Router (now that pool exists).
 	log.Println("OutboundManager initialized with lifecycle callbacks")
 	a.topoRuntime.router = routing.NewRouter(routing.RouterConfig{
+		SaveStickyIP:    engine.SaveStickyIP,
 		SaveIPHistory:   engine.SaveIPHistory,
 		DeleteIPHistory: engine.DeleteIPHistory,
 		Pool:            a.topoRuntime.pool,
@@ -263,6 +264,10 @@ func (a *resinApp) bootstrapFromPersistence(engine *state.StateEngine) error {
 	// DESIGN.md requires step 6 (rebuild) before step 7 (leases).
 	a.topoRuntime.pool.RebuildAllPlatforms()
 	log.Println("Platform rebuild complete")
+
+	if err := engine.WalkStickyIPs(a.topoRuntime.router.RestoreStickyIP); err != nil {
+		return fmt.Errorf("load sticky IPs: %w", err)
+	}
 
 	history, err := engine.LoadIPHistory()
 	if err != nil {
