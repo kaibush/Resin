@@ -132,6 +132,42 @@ func TestWebUI_IndexServed(t *testing.T) {
 	}
 }
 
+func TestWebUI_ManifestServed(t *testing.T) {
+	srv := newTestServer()
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/ui/manifest.webmanifest", nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+			}
+			if ctype := rec.Header().Get("Content-Type"); ctype != "application/manifest+json" {
+				t.Fatalf("content-type: got %q, want application/manifest+json", ctype)
+			}
+			if method == http.MethodHead {
+				if rec.Body.Len() != 0 {
+					t.Fatal("HEAD response must not include a body")
+				}
+				return
+			}
+
+			var manifest struct {
+				Display  string `json:"display"`
+				StartURL string `json:"start_url"`
+				Scope    string `json:"scope"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &manifest); err != nil {
+				t.Fatalf("decode manifest: %v", err)
+			}
+			if manifest.Display != "standalone" || manifest.StartURL != "/ui/" || manifest.Scope != "/ui/" {
+				t.Fatalf("unexpected app launch configuration: %+v", manifest)
+			}
+		})
+	}
+}
+
 func TestWebUI_SPARouteFallback(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/ui/platforms/demo", nil)

@@ -39,6 +39,10 @@ func newWebUIHandler(distFS fs.FS) http.Handler {
 		}
 
 		if info, err := fs.Stat(distFS, assetPath); err == nil && !info.IsDir() {
+			// Minimal container images may not have a MIME mapping for web manifests.
+			if path.Ext(assetPath) == ".webmanifest" {
+				w.Header().Set("Content-Type", "application/manifest+json")
+			}
 			http.ServeFileFS(w, r, distFS, assetPath)
 			return
 		}
