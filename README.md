@@ -117,6 +117,12 @@ Custom endpoint ports must also be reachable from outside the container. Docker 
 
 See the following sections for client access modes. In common scenarios, you can choose HTTP forward proxy, SOCKS5 forward proxy, or reverse proxy based on what your client supports.
 
+### iPhone / iPad Home Screen app
+
+Open your deployment's `/ui/` page in Safari and choose **Share → Add to Home Screen**. Keep **Open as Web App** enabled if shown. Launching Resin from this icon opens the console in a standalone window without Safari's address bar or bottom toolbar.
+
+If an existing icon still opens with browser controls, update the server, remove the old icon, and add it again from Safari's `/ui/` page. iOS keeps its status bar and Home indicator; the layout reserves safe areas for them.
+
 ## 🟢 Basic Usage (Non-sticky Proxy)
 
 ### Connect as a standard proxy

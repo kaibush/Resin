@@ -367,14 +367,14 @@
 @media (max-width: 960px) {
   .app-layout,
   .app-layout.is-sidebar-collapsed {
-    display: block;
+    display: flex;
     grid-template-columns: none;
   }
 
   .app-sidebar.sidebar {
     position: fixed;
     width: min(300px, calc(100vw - 48px));
-    padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom));
+    padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom)) max(12px, var(--safe-left));
   }
 
   .app-sidebar .nav-item {

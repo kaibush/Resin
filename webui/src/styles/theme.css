@@ -17,7 +17,9 @@
   --sidebar: #fafafa;
   --table-header: #f7f8fa;
   --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -29,6 +31,11 @@ body,
 #root {
   margin: 0;
   min-height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -2621,6 +2628,7 @@ a {
 .modal-card {
   width: min(840px, 100%);
   max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow: auto;
   padding: 18px;
 }
@@ -2639,6 +2647,8 @@ a {
   width: min(760px, 100vw);
   height: 100vh;
   max-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
   border-radius: 0;
   border-left: 1px solid var(--border);
   padding: 18px;
@@ -3033,6 +3043,7 @@ a {
 
 .login-layout {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;

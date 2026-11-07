@@ -40,7 +40,8 @@
 
 @media (max-width: 960px) {
   .app-layout {
-    display: block;
+    display: flex;
+    flex-direction: column;
     min-height: 100dvh;
   }
 
@@ -52,7 +53,7 @@
     align-items: center;
     gap: 10px;
     min-height: calc(56px + var(--safe-top));
-    padding: calc(8px + var(--safe-top)) 12px 8px;
+    padding: calc(8px + var(--safe-top)) max(12px, var(--safe-right)) 8px max(12px, var(--safe-left));
     border-bottom: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.92);
     backdrop-filter: saturate(1.2) blur(12px);
@@ -139,8 +140,26 @@
   }
 
   .main {
-    min-height: 100dvh;
-    padding: 12px 12px calc(16px + var(--safe-bottom));
+    flex: 1;
+    min-height: 0;
+    padding: 12px max(12px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(12px, var(--safe-left));
+  }
+
+  .login-layout {
+    padding: calc(16px + var(--safe-top)) max(16px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(16px, var(--safe-left));
+  }
+
+  .toast-container {
+    top: calc(12px + var(--safe-top));
+    left: max(12px, var(--safe-left));
+    right: max(12px, var(--safe-right));
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+
+  .toast-item {
+    max-width: min(420px, 100%);
   }
 
   .content {
@@ -156,13 +175,17 @@
     width: 100%;
     max-height: calc(100dvh - var(--safe-top) - 12px);
     border-radius: 16px 16px 0 0;
+    padding-right: max(18px, var(--safe-right));
     padding-bottom: calc(16px + var(--safe-bottom));
+    padding-left: max(18px, var(--safe-left));
   }
 
   .drawer-panel {
     width: 100vw;
     padding-top: calc(16px + var(--safe-top));
+    padding-right: max(18px, var(--safe-right));
     padding-bottom: calc(16px + var(--safe-bottom));
+    padding-left: max(18px, var(--safe-left));
   }
 
   .data-table-wrap,
